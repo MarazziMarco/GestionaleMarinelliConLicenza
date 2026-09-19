@@ -6,17 +6,20 @@ import { profileFromEmail } from "../../../lib/user-profiles";
 type LoginBody = { action?: string; accessToken?: string };
 
 async function applicationUserForEmail(email: string) {
-  const profile = profileFromEmail(email);
+  const normalized = email.trim().toLowerCase();
+  const username = normalized.replace(/@gestionale\.local$/, "").split("@")[0];
+  // 1) Profilo dalla tabella users (account creati dall'admin + storici già presenti)
+  const existing = await database().prepare(`SELECT id, username, display_name AS displayName, role, store, must_change_password AS mustChangePassword FROM users WHERE LOWER(username) = ?`)
+    .bind(username).first<SessionUser>();
+  if (existing) return { ...existing, mustChangePassword: 0 };
+  // 2) Fallback storico (admin/viterbo/gran-sasso/test): crea la riga se manca
+  const profile = profileFromEmail(normalized);
   if (!profile) return null;
-  let user = await database().prepare(`SELECT id, username, display_name AS displayName, role, store, must_change_password AS mustChangePassword FROM users WHERE username = ?`)
+  await database().prepare(`INSERT OR IGNORE INTO users (username, display_name, role, store, password_salt, password_hash, password_iterations, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 100000, 0, ?)`)
+    .bind(profile.username, profile.displayName, profile.role, profile.store, crypto.randomUUID(), crypto.randomUUID(), new Date().toISOString()).run();
+  const created = await database().prepare(`SELECT id, username, display_name AS displayName, role, store, must_change_password AS mustChangePassword FROM users WHERE username = ?`)
     .bind(profile.username).first<SessionUser>();
-  if (!user) {
-    await database().prepare(`INSERT OR IGNORE INTO users (username, display_name, role, store, password_salt, password_hash, password_iterations, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 100000, 0, ?)`)
-      .bind(profile.username, profile.displayName, profile.role, profile.store, crypto.randomUUID(), crypto.randomUUID(), new Date().toISOString()).run();
-    user = await database().prepare(`SELECT id, username, display_name AS displayName, role, store, must_change_password AS mustChangePassword FROM users WHERE username = ?`)
-      .bind(profile.username).first<SessionUser>();
-  }
-  return user ? { ...user, mustChangePassword: 0 } : null;
+  return created ? { ...created, mustChangePassword: 0 } : null;
 }
 
 export async function GET(request: Request) {
