@@ -35,5 +35,7 @@ export function profileFromEmail(email: string | null | undefined): LoginProfile
 }
 
 export function emailForUsername(username: string): string | null {
-  return loginProfiles[username.trim().toLowerCase()]?.email ?? null;
+  const key = username.trim().toLowerCase();
+  if (loginProfiles[key]) return loginProfiles[key].email;
+  return /^[a-z0-9._-]{3,32}$/.test(key) ? `${key}@gestionale.local` : null;
 }
