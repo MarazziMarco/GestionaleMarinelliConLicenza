@@ -960,12 +960,55 @@ function Analytics({ data }: { data: Bootstrap }) {
   const [brand, setBrand] = useState("Tutte");
   const [model, setModel] = useState("");
   const brands = useMemo(() => [...new Set(data.products.map((product) => product.brand).filter(Boolean))].sort((left, right) => variantCollator.compare(left, right)), [data.products]);
-  const filtered = useMemo(() => {
+  const periodStart = useMemo(() => {
     const now = new Date();
-    const start = period === "month" ? new Date(now.getFullYear(), now.getMonth(), 1) : period === "week" ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7)) : null;
+    if (period === "month") return new Date(now.getFullYear(), now.getMonth(), 1);
+    if (period === "week") return new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+    return null;
+  }, [period]);
+  const filtered = useMemo(() => {
     const query = model.trim().toLocaleLowerCase("it");
-    return (data.saleItems ?? []).filter((item) => item.itemType === "product" && (!start || new Date(item.createdAt) >= start) && (brand === "Tutte" || item.brand === brand) && (!query || `${item.productName} ${item.description}`.toLocaleLowerCase("it").includes(query)));
-  }, [data.saleItems, period, brand, model]);
+    return (data.saleItems ?? []).filter((item) => item.itemType === "product" && (!periodStart || new Date(item.createdAt) >= periodStart) && (brand === "Tutte" || item.brand === brand) && (!query || `${item.productName} ${item.description}`.toLocaleLowerCase("it").includes(query)));
+  }, [data.saleItems, periodStart, brand, model]);
+  const statsFor = (store?: Store) => {
+    const rows = store ? filtered.filter((row) => row.store === store) : filtered;
+    const incassi = rows.reduce((sum, row) => sum + row.lineTotal, 0);
+    const pezzi = rows.reduce((sum, row) => sum + row.quantity, 0);
+    const scontrini = new Set(rows.map((row) => row.saleId)).size;
+    return { incassi, pezzi, scontrini, medio: scontrini ? incassi / scontrini : 0 };
+  };
+  const total = statsFor();
+  const stores = { Viterbo: statsFor("Viterbo"), "Gran Sasso": statsFor("Gran Sasso") };
+  const periodLabel = period === "week" ? "questa settimana" : period === "month" ? "questo mese" : "tutto lo storico";
+  const trend = useMemo(() => {
+    const now = new Date();
+    const buckets: { key: string; label: string; start: Date; end: Date }[] = [];
+    if (period === "all") {
+      for (let i = 11; i >= 0; i -= 1) {
+        const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+        buckets.push({ key: `${start.getFullYear()}-${start.getMonth()}`, label: start.toLocaleDateString("it-IT", { month: "short" }), start, end });
+      }
+    } else {
+      const days = period === "week" ? 7 : now.getDate();
+      const base = period === "week" ? new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6) : new Date(now.getFullYear(), now.getMonth(), 1);
+      for (let i = 0; i < days; i += 1) {
+        const start = new Date(base.getFullYear(), base.getMonth(), base.getDate() + i);
+        const end = new Date(start.getFullYear(), start.getMonth(), start.getDate() + 1);
+        buckets.push({ key: start.toISOString().slice(0, 10), label: period === "week" ? start.toLocaleDateString("it-IT", { weekday: "short" }) : String(start.getDate()), start, end });
+      }
+    }
+    return buckets.map((bucket) => {
+      let viterbo = 0, granSasso = 0;
+      for (const row of filtered) {
+        const time = new Date(row.createdAt);
+        if (time < bucket.start || time >= bucket.end) continue;
+        if (row.store === "Viterbo") viterbo += row.lineTotal; else if (row.store === "Gran Sasso") granSasso += row.lineTotal;
+      }
+      return { ...bucket, viterbo, granSasso };
+    });
+  }, [filtered, period]);
+  const trendMax = Math.max(1, ...trend.map((bucket) => bucket.viterbo + bucket.granSasso));
   function ranking(store: Store) {
     const map = new Map<string, { name: string; brand: string; quantity: number; total: number }>();
     for (const item of filtered.filter((row) => row.store === store)) {
@@ -976,7 +1019,12 @@ function Analytics({ data }: { data: Bootstrap }) {
     return [...map.values()].sort((left, right) => right.quantity - left.quantity).slice(0, 15);
   }
   const rankings = { Viterbo: ranking("Viterbo"), "Gran Sasso": ranking("Gran Sasso") };
-  return <section className="screen"><div className="screen-head"><div><p className="eyebrow">ANALISI VENDITE</p><h1>Prodotti più venduti per negozio</h1><p className="muted inventory-intro">Confronta subito Viterbo e Gran Sasso, filtrando periodo, marca e modello.</p></div></div><div className="panel analytics-filters"><label className="field"><span>Periodo</span><select value={period} onChange={(event) => setPeriod(event.target.value as "week" | "month" | "all")}><option value="week">Settimana corrente</option><option value="month">Mese corrente</option><option value="all">Tutto lo storico</option></select></label><label className="field"><span>Marca</span><select value={brand} onChange={(event) => setBrand(event.target.value)}><option>Tutte</option>{brands.map((item) => <option key={item}>{item}</option>)}</select></label><ClearableInput label="Modello / prodotto" value={model} onChange={setModel} placeholder="Cerca modello…" /></div><div className="warehouse-grid analytics-stores">{(["Viterbo", "Gran Sasso"] as Store[]).map((store) => { const rows = rankings[store]; const max = Math.max(1, ...rows.map((row) => row.quantity)); return <div className="panel" key={store}><div className="panel-title"><div><p className="eyebrow">CLASSIFICA NEGOZIO</p><h2>{store}</h2></div><span className="count-pill">{rows.reduce((sum, row) => sum + row.quantity, 0)} pezzi</span></div><div className="chart-list">{rows.length ? rows.map((row, index) => <div className="chart-row" key={`${store}-${row.brand}-${row.name}`}><span>{index + 1}</span><div><strong>{row.brand ? `${row.brand} · ` : ""}{row.name}</strong><div className="bar"><i style={{ width: `${Math.max(4, row.quantity / max * 100)}%` }} /></div></div><b>{row.quantity} pz</b><small>{money(row.total)}</small></div>) : <Empty>Nessuna vendita per i filtri selezionati.</Empty>}</div></div>; })}</div></section>;
+  return <section className="screen"><div className="screen-head"><div><p className="eyebrow">ANALISI VENDITE</p><h1>Analisi vendite</h1><p className="muted inventory-intro">Incassi, andamento e prodotti più venduti, con confronto tra Viterbo e Gran Sasso.</p></div></div>
+    <div className="panel analytics-filters"><label className="field"><span>Periodo</span><select value={period} onChange={(event) => setPeriod(event.target.value as "week" | "month" | "all")}><option value="week">Settimana corrente</option><option value="month">Mese corrente</option><option value="all">Tutto lo storico</option></select></label><label className="field"><span>Marca</span><select value={brand} onChange={(event) => setBrand(event.target.value)}><option>Tutte</option>{brands.map((item) => <option key={item}>{item}</option>)}</select></label><ClearableInput label="Modello / prodotto" value={model} onChange={setModel} placeholder="Cerca modello…" /></div>
+    <div className="metric-grid"><Metric label="Incasso prodotti" value={money(total.incassi)} note={periodLabel} /><Metric label="Scontrini" value={String(total.scontrini)} note={`${total.pezzi} pezzi venduti`} /><Metric label="Scontrino medio" value={money(total.medio)} note="per scontrino" /><Metric label="Marche attive" value={String(new Set(filtered.map((row) => row.brand).filter(Boolean)).size)} note="con vendite nel periodo" /></div>
+    <div className="dashboard-charts"><div className="panel realtime-comparison"><div className="panel-title"><div><p className="eyebrow">CONFRONTO</p><h2>Viterbo vs Gran Sasso</h2></div><span className="count-pill">{money(total.incassi)}</span></div>{(["Viterbo", "Gran Sasso"] as Store[]).map((store) => { const s = stores[store]; const share = total.incassi ? Math.round(s.incassi / total.incassi * 100) : 0; return <div className="store-bar" key={store}><div><strong>{store}</strong><b>{money(s.incassi)} · {share}%</b></div><div className="store-bar-track"><i className={store === "Viterbo" ? "viterbo" : "gran-sasso"} style={{ width: `${Math.max(2, share)}%` }} /></div><small className="store-bar-note">{s.scontrini} scontrini · {s.pezzi} pz · medio {money(s.medio)}</small></div>; })}</div><div className="panel realtime-trend"><div className="panel-title"><div><p className="eyebrow">ANDAMENTO NEL TEMPO</p><h2>Incasso per periodo</h2></div><div className="chart-legend"><span><i className="viterbo" />Viterbo</span><span><i className="gran-sasso" />Gran Sasso</span></div></div>{trend.some((bucket) => bucket.viterbo + bucket.granSasso > 0) ? <div className="analytics-trend">{trend.map((bucket) => { const totBucket = bucket.viterbo + bucket.granSasso; const height = totBucket / trendMax * 100; return <div className="analytics-col" key={bucket.key} title={`${bucket.label}: ${money(totBucket)}`}><div className="analytics-col-stack" style={{ height: `${Math.max(totBucket > 0 ? 3 : 0, height)}%` }}><i className="viterbo" style={{ height: `${totBucket ? bucket.viterbo / totBucket * 100 : 0}%` }} /><i className="gran-sasso" style={{ height: `${totBucket ? bucket.granSasso / totBucket * 100 : 0}%` }} /></div><small>{bucket.label}</small></div>; })}</div> : <Empty>Nessuna vendita nel periodo selezionato.</Empty>}</div></div>
+    <div className="warehouse-grid analytics-stores">{(["Viterbo", "Gran Sasso"] as Store[]).map((store) => { const rows = rankings[store]; const max = Math.max(1, ...rows.map((row) => row.quantity)); return <div className="panel" key={store}><div className="panel-title"><div><p className="eyebrow">CLASSIFICA NEGOZIO</p><h2>{store}</h2></div><span className="count-pill">{rows.reduce((sum, row) => sum + row.quantity, 0)} pezzi</span></div><div className="chart-list">{rows.length ? rows.map((row, index) => <div className="chart-row" key={`${store}-${row.brand}-${row.name}`}><span>{index + 1}</span><div><strong>{row.brand ? `${row.brand} · ` : ""}{row.name}</strong><div className="bar"><i style={{ width: `${Math.max(4, row.quantity / max * 100)}%` }} /></div></div><b>{row.quantity} pz</b><small>{money(row.total)}</small></div>) : <Empty>Nessuna vendita per i filtri selezionati.</Empty>}</div></div>; })}</div>
+  </section>;
 }
 
 function Dashboard({ data }: { data: Bootstrap }) {
