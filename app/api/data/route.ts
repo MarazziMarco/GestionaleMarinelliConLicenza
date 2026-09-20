@@ -1,6 +1,7 @@
 import { currentUser, database, ean13, ensureDatabase, hashToken, idCode, isTestMode, json, logActivity, type SessionUser, type Store } from "../../../lib/runtime-db";
 import { getBucket } from "../../../lib/storage";
 import { withDbScope } from "../../../lib/db";
+import { createAuthUser, setAuthUserPassword, deleteAuthUser } from "../../../lib/supabase-server";
 
 type JsonMap = Record<string, unknown>;
 type CartItem = {
@@ -194,7 +195,10 @@ async function bootstrap(user: SessionUser) {
   const reorderSettingsRow = await database().prepare(`SELECT value FROM app_settings WHERE key = 'reorder_settings'`).first<{ value: string }>();
   let reorderSettings = { globalMinEnabled: false, globalMin: 2, suggestTransfers: true, transferSafety: 0 };
   if (reorderSettingsRow?.value) { try { reorderSettings = { ...reorderSettings, ...JSON.parse(reorderSettingsRow.value) }; } catch { /* valore non valido: usa i default */ } }
-  return { user, products, customers, sales, gifts, reservations, transfers, documents, saleItems, fiscalDevices, fiscalJobs, services, reorderSettings, generatedAt: new Date().toISOString() };
+  const accounts = user.role === "admin"
+    ? await all<{ id: number; username: string; role: string; store: string | null; displayName: string }>(`SELECT id, username, role, store, display_name AS displayName FROM users ORDER BY username`)
+    : [];
+  return { user, products, customers, sales, gifts, reservations, transfers, documents, saleItems, fiscalDevices, fiscalJobs, services, reorderSettings, accounts, generatedAt: new Date().toISOString() };
 }
 
 async function getImpl(request: Request) {
@@ -342,6 +346,59 @@ async function deleteCustomer(user: SessionUser, body: JsonMap) {
   const result = await database().prepare(`UPDATE customers SET active = 0 WHERE id = ? AND active = 1`).bind(customerId).run();
   if (!result.meta?.changes) return json({ error: "Cliente non trovato." }, 404);
   await logActivity({ user, action: "delete", entity: "customer", entityId: customerId });
+  return json({ ok: true });
+}
+
+function storeForRole(role: string): Store | null {
+  return role === "viterbo" ? "Viterbo" : role === "gran_sasso" ? "Gran Sasso" : null;
+}
+
+async function createUser(user: SessionUser, body: JsonMap) {
+  const denied = adminOnly(user); if (denied) return denied;
+  const username = stringValue(body.username).trim().toLowerCase();
+  const password = stringValue(body.password);
+  const role = stringValue(body.role);
+  const displayName = stringValue(body.displayName).trim() || username;
+  if (!/^[a-z0-9._-]{3,32}$/.test(username)) return json({ error: "Username non valido (3-32, minuscole, . _ -)." }, 400);
+  if (password.length < 6) return json({ error: "La password deve avere almeno 6 caratteri." }, 400);
+  if (!["admin", "viterbo", "gran_sasso"].includes(role)) return json({ error: "Ruolo non valido." }, 400);
+  const exists = await database().prepare(`SELECT id FROM users WHERE LOWER(username) = ?`).bind(username).first();
+  if (exists) return json({ error: "Username già esistente." }, 409);
+  const email = `${username}@gestionale.local`;
+  await createAuthUser(email, password);
+  await database().prepare(`INSERT INTO users (username, display_name, role, store, password_salt, password_hash, password_iterations, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 100000, 0, ?)`)
+    .bind(username, displayName, role, storeForRole(role), crypto.randomUUID(), crypto.randomUUID(), new Date().toISOString()).run();
+  await logActivity({ user, action: "create", entity: "account", detail: `${username} · ${role}` });
+  return json({ ok: true });
+}
+
+async function resetUserPassword(user: SessionUser, body: JsonMap) {
+  const denied = adminOnly(user); if (denied) return denied;
+  const username = stringValue(body.username).trim().toLowerCase();
+  const password = stringValue(body.password);
+  if (password.length < 6) return json({ error: "La password deve avere almeno 6 caratteri." }, 400);
+  const row = await database().prepare(`SELECT id FROM users WHERE LOWER(username) = ?`).bind(username).first();
+  if (!row) return json({ error: "Account non trovato." }, 404);
+  await setAuthUserPassword(`${username}@gestionale.local`, password);
+  await logActivity({ user, action: "update", entity: "account", detail: `reset password ${username}` });
+  return json({ ok: true });
+}
+
+async function deleteUser(user: SessionUser, body: JsonMap) {
+  const denied = adminOnly(user); if (denied) return denied;
+  const username = stringValue(body.username).trim().toLowerCase();
+  if (username === user.username.toLowerCase()) return json({ error: "Non puoi eliminare il tuo account." }, 409);
+  if (username === "test") return json({ error: "L'account di prova non è eliminabile." }, 409);
+  const row = await database().prepare(`SELECT id, role FROM users WHERE LOWER(username) = ?`).bind(username).first<{ id: number; role: string }>();
+  if (!row) return json({ error: "Account non trovato." }, 404);
+  if (row.role === "admin") {
+    const admins = await database().prepare(`SELECT COUNT(*) AS n FROM users WHERE role = 'admin'`).first<{ n: number }>();
+    if ((admins?.n ?? 0) <= 1) return json({ error: "Deve restare almeno un amministratore." }, 409);
+  }
+  await deleteAuthUser(`${username}@gestionale.local`);
+  await database().prepare(`DELETE FROM sessions WHERE user_id = ?`).bind(row.id).run();
+  await database().prepare(`DELETE FROM users WHERE id = ?`).bind(row.id).run();
+  await logActivity({ user, action: "delete", entity: "account", detail: username });
   return json({ ok: true });
 }
 
@@ -1321,6 +1378,9 @@ async function postImpl(request: Request) {
     if (action === "completeLocalFiscalJob") return completeLocalFiscalJob(auth.user, body);
     if (action === "failLocalFiscalJob") return failLocalFiscalJob(auth.user, body);
     if (action === "resetData") return resetData(auth.user, body);
+    if (action === "createUser") return createUser(auth.user, body);
+    if (action === "resetUserPassword") return resetUserPassword(auth.user, body);
+    if (action === "deleteUser") return deleteUser(auth.user, body);
     return json({ error: "Operazione non disponibile." }, 404);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Errore inatteso";
