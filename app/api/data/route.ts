@@ -892,6 +892,17 @@ async function createSale(user: SessionUser, body: JsonMap) {
     if (!gift || gift.status !== "active" || (gift.expiresAt && new Date(gift.expiresAt) < new Date()) || gift.balance + 0.001 < giftAmount) return json({ error: "Buono non valido o saldo insufficiente." }, 400);
   }
 
+  // Buono speso come riga sconto (itemType gift_redemption, importo negativo): lo
+  // scontrino vale solo la differenza. Validazione saldo prima di registrare.
+  const giftRedemptions = items
+    .filter((item) => item.itemType === "gift_redemption")
+    .map((item) => ({ code: stringValue(item.metadata.code), amount: Math.round(Math.abs(item.quantity * item.unitPrice) * 100) / 100 }));
+  for (const redemption of giftRedemptions) {
+    if (!redemption.code || redemption.amount <= 0) return json({ error: "Buono da scalare non valido." }, 400);
+    const gift = await database().prepare(`SELECT balance, expires_at AS expiresAt, status FROM gift_cards WHERE code = ?`).bind(redemption.code).first<{ balance: number; expiresAt: string; status: string }>();
+    if (!gift || gift.status !== "active" || (gift.expiresAt && new Date(gift.expiresAt) < new Date()) || gift.balance + 0.001 < redemption.amount) return json({ error: `Buono ${redemption.code} non valido o saldo insufficiente.` }, 400);
+  }
+
   const receiptNo = idCode(store === "Viterbo" ? "VT" : "GS");
   const type = items.some((item) => item.itemType === "return") ? "exchange" : "sale";
   const createdAt = new Date().toISOString();
@@ -978,6 +989,7 @@ async function createSale(user: SessionUser, body: JsonMap) {
   }
 
   if (giftAmount > 0) await database().prepare(`UPDATE gift_cards SET balance = balance - ?, status = CASE WHEN balance - ? <= 0.001 THEN 'used' ELSE 'active' END WHERE code = ?`).bind(giftAmount, giftAmount, giftCodeUsed).run();
+  for (const redemption of giftRedemptions) await database().prepare(`UPDATE gift_cards SET balance = balance - ?, status = CASE WHEN balance - ? <= 0.001 THEN 'used' ELSE 'active' END WHERE code = ?`).bind(redemption.amount, redemption.amount, redemption.code).run();
   if (customerId) {
     const otherStore = store === "Viterbo" ? "Gran Sasso" : "Viterbo";
     const previous = await database().prepare(`SELECT id FROM sales WHERE customer_id = ? AND store = ? LIMIT 1`).bind(customerId, otherStore).first();
