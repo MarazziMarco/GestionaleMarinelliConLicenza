@@ -1,4 +1,4 @@
-import { getDb, isDevDb, useSandbox } from "./db";
+import { dbScope, getDb, isDevDb, useSandbox } from "./db";
 
 // Account che lavorano su uno schema DB isolato (dati finti, non toccano il reale).
 export const SANDBOX_USERS = new Set(["test"]);
@@ -169,6 +169,38 @@ export function ensureDatabase(): Promise<void> {
   return migrationPromise;
 }
 
+// Colonne aggiunte in evoluzione (idempotenti). Estratte in un elenco per poterle
+// applicare sia allo schema public sia allo schema sandbox (account test).
+const columnAdditions = [
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS password_iterations INTEGER NOT NULL DEFAULT 100000`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE customers ADD COLUMN IF NOT EXISTS active INTEGER NOT NULL DEFAULT 1`,
+  `ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reorder_level INTEGER NOT NULL DEFAULT 2`,
+  // Sconti/promozioni prodotti: prezzo resta il listino, lo sconto è additivo e a tempo.
+  `ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_percent double precision NOT NULL DEFAULT 0`,
+  `ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_expires_at TEXT`,
+  `ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`,
+  `ALTER TABLE transfers ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'accepted'`,
+  `ALTER TABLE transfers ADD COLUMN IF NOT EXISTS note TEXT`,
+  `ALTER TABLE transfers ADD COLUMN IF NOT EXISTS completed_at TEXT`,
+  `ALTER TABLE reservations ADD COLUMN IF NOT EXISTS expected_delivery TEXT`,
+  `ALTER TABLE reservations ADD COLUMN IF NOT EXISTS deposit_paid INTEGER NOT NULL DEFAULT 0`,
+  `ALTER TABLE reservations ADD COLUMN IF NOT EXISTS note TEXT`,
+];
+const columnRelaxations = [
+  `ALTER TABLE transfer_items ALTER COLUMN product_id DROP NOT NULL`,
+  `ALTER TABLE gift_cards ALTER COLUMN issued_sale_id DROP NOT NULL`,
+  `ALTER TABLE gift_cards ALTER COLUMN expires_at DROP NOT NULL`,
+  `ALTER TABLE reservations ALTER COLUMN issued_sale_id DROP NOT NULL`,
+];
+async function applyColumnMigrations(db: D1Database, tolerant = false) {
+  for (const statement of columnAdditions) {
+    if (tolerant) { try { await db.prepare(statement).run(); } catch { /* tabella assente nello schema: si prosegue */ } }
+    else await db.prepare(statement).run();
+  }
+  for (const statement of columnRelaxations) { try { await db.prepare(statement).run(); } catch { /* già nullable */ } }
+}
+
 async function runMigrations() {
   const db = database();
   await db.batch(schemaStatements.map((statement) => db.prepare(statement)));
@@ -176,25 +208,13 @@ async function runMigrations() {
     db.prepare(`DELETE FROM sessions WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'firebase_auth_cutover_v1')`),
     db.prepare(`INSERT OR IGNORE INTO app_settings (key, value) VALUES ('firebase_auth_cutover_v1', ?)` ).bind(new Date().toISOString()),
   ]);
-  // Postgres: le colonne aggiunte in evoluzione si creano idempotenti.
-  await db.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_iterations INTEGER NOT NULL DEFAULT 100000`).run();
-  await db.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 1`).run();
-  await db.prepare(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS active INTEGER NOT NULL DEFAULT 1`).run();
-  await db.prepare(`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reorder_level INTEGER NOT NULL DEFAULT 2`).run();
-  // Sconti/promozioni prodotti: prezzo resta il listino, lo sconto è additivo e a tempo.
-  await db.prepare(`ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_percent double precision NOT NULL DEFAULT 0`).run();
-  await db.prepare(`ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_expires_at TEXT`).run();
-  await db.prepare(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`).run();
-  await db.prepare(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'accepted'`).run();
-  await db.prepare(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS note TEXT`).run();
-  await db.prepare(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS completed_at TEXT`).run();
-  try { await db.prepare(`ALTER TABLE transfer_items ALTER COLUMN product_id DROP NOT NULL`).run(); } catch { /* già nullable */ }
-  try { await db.prepare(`ALTER TABLE gift_cards ALTER COLUMN issued_sale_id DROP NOT NULL`).run(); } catch { /* già nullable */ }
-  try { await db.prepare(`ALTER TABLE gift_cards ALTER COLUMN expires_at DROP NOT NULL`).run(); } catch { /* già nullable */ }
-  try { await db.prepare(`ALTER TABLE reservations ALTER COLUMN issued_sale_id DROP NOT NULL`).run(); } catch { /* già nullable */ }
-  await db.prepare(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS expected_delivery TEXT`).run();
-  await db.prepare(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS deposit_paid INTEGER NOT NULL DEFAULT 0`).run();
-  await db.prepare(`ALTER TABLE reservations ADD COLUMN IF NOT EXISTS note TEXT`).run();
+  await applyColumnMigrations(db);
+  // Allinea le stesse colonne anche allo schema sandbox (account test), così non
+  // resta indietro quando si aggiungono campi. Solo su Postgres reale (non pglite).
+  if (!isDevDb()) {
+    try { await dbScope.run({ sandbox: true }, () => applyColumnMigrations(database(), true)); }
+    catch { /* schema sandbox assente o non allineabile: si prosegue */ }
+  }
   await db.prepare(`UPDATE users SET username = 'admin', display_name = 'Amministratore', role = 'admin', store = NULL, must_change_password = 0 WHERE username = 'amministratore' AND NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin')`).run();
   await db.prepare(`UPDATE users SET display_name = 'Cassa Viterbo', role = 'viterbo', store = 'Viterbo', must_change_password = 0 WHERE username = 'viterbo'`).run();
   await db.prepare(`UPDATE users SET display_name = 'Cassa Gran Sasso', role = 'gran_sasso', store = 'Gran Sasso', must_change_password = 0 WHERE username = 'gran-sasso'`).run();
