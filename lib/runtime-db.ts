@@ -157,7 +157,19 @@ export async function seedDemoProducts() {
   }
 }
 
-export async function ensureDatabase() {
+// Le migrazioni sono idempotenti ma costose: ~30 statement, ognuno un round-trip
+// verso Postgres (6-8s se rifatte a ogni richiesta). Girano sempre sullo schema
+// public (prima dello switch sandbox), quindi si eseguono una sola volta per
+// processo. In caso di errore si azzera la cache per riprovare alla prossima chiamata.
+let migrationPromise: Promise<void> | null = null;
+export function ensureDatabase(): Promise<void> {
+  if (!migrationPromise) {
+    migrationPromise = runMigrations().catch((error) => { migrationPromise = null; throw error; });
+  }
+  return migrationPromise;
+}
+
+async function runMigrations() {
   const db = database();
   await db.batch(schemaStatements.map((statement) => db.prepare(statement)));
   await db.batch([
