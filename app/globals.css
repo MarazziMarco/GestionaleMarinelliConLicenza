@@ -530,6 +530,21 @@ td small { margin-top: .16rem; font-size: .62rem; }
 .recent-documents h3 { margin: 0; font-size: .82rem; }
 .recent-documents .document-row { grid-template-columns: minmax(0,1fr) auto; }
 .recent-documents .document-row b { display: none; }
+.recent-documents .doc-row { grid-template-columns: minmax(0,1fr) auto auto; gap: .6rem; }
+.recent-documents .doc-row b { display: block; font-size: .82rem; }
+.doc-badge { display: inline-block; padding: .1rem .42rem; border-radius: 6px; font-size: .58rem; font-weight: 850; text-transform: uppercase; letter-spacing: .03em; }
+.doc-badge.invoice { background: rgba(66,199,255,.16); color: var(--green); }
+.doc-badge.quote { background: var(--surface-2); color: var(--ink-soft); }
+.doc-row-actions { display: inline-flex; gap: .3rem; }
+.doc-row-actions a { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--surface-2); color: var(--green); }
+.doc-row-actions a:hover { background: var(--mint); }
+.doc-row-actions .material-symbols-rounded { font-size: 18px; }
+.document-created { margin-top: 1rem; padding: .9rem; border-radius: 14px; border: 1px solid var(--line); background: var(--surface-2); }
+.document-created-msg { display: flex; align-items: center; gap: .4rem; margin: 0 0 .7rem; color: var(--success); font-weight: 850; font-size: .82rem; }
+.document-created-msg .material-symbols-rounded { font-size: 18px; }
+.document-created-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.document-created-actions a { display: inline-flex; align-items: center; justify-content: center; gap: .35rem; padding: .6rem; border-radius: 10px; font-weight: 800; font-size: .82rem; text-decoration: none; }
+.document-created-actions .material-symbols-rounded { font-size: 18px; }
 .manual-document-line { display: grid; grid-template-columns: minmax(180px,1.5fr) 80px 150px 110px auto; gap: .6rem; align-items: end; margin-top: 1rem; padding: .8rem; border: 1px dashed #b5d3df; border-radius: 14px; background: var(--surface-2); }
 .document-lines { display: grid; gap: .45rem; margin-top: .45rem; }
 .document-lines-head, .document-line-row { display: grid; grid-template-columns: minmax(190px,1fr) 70px 105px 85px 90px 90px 34px; gap: .45rem; align-items: center; }
