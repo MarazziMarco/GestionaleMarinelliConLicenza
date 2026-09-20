@@ -356,7 +356,7 @@ function storeForRole(role: string): Store | null {
 async function createUser(user: SessionUser, body: JsonMap) {
   const denied = adminOnly(user); if (denied) return denied;
   const username = stringValue(body.username).trim().toLowerCase();
-  const password = stringValue(body.password);
+  const password = typeof body.password === "string" ? body.password : "";
   const role = stringValue(body.role);
   const displayName = stringValue(body.displayName).trim() || username;
   if (!/^[a-z0-9._-]{3,32}$/.test(username)) return json({ error: "Username non valido (3-32, minuscole, . _ -)." }, 400);
@@ -366,8 +366,13 @@ async function createUser(user: SessionUser, body: JsonMap) {
   if (exists) return json({ error: "Username già esistente." }, 409);
   const email = `${username}@gestionale.local`;
   await createAuthUser(email, password);
-  await database().prepare(`INSERT INTO users (username, display_name, role, store, password_salt, password_hash, password_iterations, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 100000, 0, ?)`)
-    .bind(username, displayName, role, storeForRole(role), crypto.randomUUID(), crypto.randomUUID(), new Date().toISOString()).run();
+  try {
+    await database().prepare(`INSERT INTO users (username, display_name, role, store, password_salt, password_hash, password_iterations, must_change_password, created_at) VALUES (?, ?, ?, ?, ?, ?, 100000, 0, ?)`)
+      .bind(username, displayName, role, storeForRole(role), crypto.randomUUID(), crypto.randomUUID(), new Date().toISOString()).run();
+  } catch (reason) {
+    await deleteAuthUser(email).catch(() => {});
+    throw reason;
+  }
   await logActivity({ user, action: "create", entity: "account", detail: `${username} · ${role}` });
   return json({ ok: true });
 }
@@ -375,7 +380,7 @@ async function createUser(user: SessionUser, body: JsonMap) {
 async function resetUserPassword(user: SessionUser, body: JsonMap) {
   const denied = adminOnly(user); if (denied) return denied;
   const username = stringValue(body.username).trim().toLowerCase();
-  const password = stringValue(body.password);
+  const password = typeof body.password === "string" ? body.password : "";
   if (password.length < 6) return json({ error: "La password deve avere almeno 6 caratteri." }, 400);
   const row = await database().prepare(`SELECT id FROM users WHERE LOWER(username) = ?`).bind(username).first();
   if (!row) return json({ error: "Account non trovato." }, 404);
