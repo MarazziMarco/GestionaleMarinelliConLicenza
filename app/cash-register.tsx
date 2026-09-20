@@ -38,7 +38,7 @@ export type CartItem = {
   locked?: boolean;
   metadata: Record<string, unknown>;
 };
-export type PendingCashAction = { kind: "reservationDeposit" | "reservationDelivery" | "return"; reservationId?: number; label: string; lines: CartItem[] };
+export type PendingCashAction = { kind: "reservationDeposit" | "reservationDelivery" | "return" | "giftIssue"; reservationId?: number; label: string; lines: CartItem[] };
 
 type ReservationDraftLine = {
   key: string;
