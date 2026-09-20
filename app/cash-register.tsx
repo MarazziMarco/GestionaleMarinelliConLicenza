@@ -12,6 +12,8 @@ type Product = {
   color: string;
   size: string;
   price: number;
+  discountPercent?: number;
+  discountExpiresAt?: string | null;
   eans: string;
   viterboQty: number;
   viterboReserved: number;
@@ -39,6 +41,10 @@ export type CartItem = {
   metadata: Record<string, unknown>;
 };
 export type PendingCashAction = { kind: "reservationDeposit" | "reservationDelivery" | "return" | "giftIssue"; reservationId?: number; label: string; lines: CartItem[] };
+
+// Prezzo effettivo: applica lo sconto promozionale se attivo e non scaduto.
+const productDiscountActive = (p: Product) => (p.discountPercent ?? 0) > 0 && (!p.discountExpiresAt || new Date(`${p.discountExpiresAt}T23:59:59`) >= new Date());
+const effectivePrice = (p: Product) => productDiscountActive(p) ? Math.round(p.price * (1 - (p.discountPercent ?? 0) / 100) * 100) / 100 : p.price;
 
 type ReservationDraftLine = {
   key: string;
@@ -421,7 +427,7 @@ function DepositForm({ products, store, repair, add, close }: { products: Produc
       } else {
         const next = existing
           ? lines.map((item) => item.productId === product.id ? { ...item, quantity: nextQuantity } : item)
-          : [...lines, { key: keyId(), productId: product.id, description: productLabel(product), quantity: 1, unitPrice: product.price, discountPercent: 0 }];
+          : [...lines, { key: keyId(), productId: product.id, description: productLabel(product), quantity: 1, unitPrice: effectivePrice(product), discountPercent: 0 }];
         updateLines(next); setError("");
       }
     }
@@ -656,7 +662,7 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
     if (alreadyInCart + 1 > available(product)) { setError(`${product.name}: quantità disponibile a ${store} esaurita.`); return; }
     setCart((current) => {
       const existing = current.find((item) => item.productId === product.id && item.itemType === "product");
-      return existing ? current.map((item) => item.key === existing.key ? { ...item, quantity: item.quantity + 1 } : item) : [...current, { key: keyId(), productId: product.id, description: productLabel(product), quantity: 1, unitPrice: product.price, discountPercent: 0, itemType: "product", metadata: {} }];
+      return existing ? current.map((item) => item.key === existing.key ? { ...item, quantity: item.quantity + 1 } : item) : [...current, { key: keyId(), productId: product.id, description: productLabel(product), quantity: 1, unitPrice: effectivePrice(product), discountPercent: 0, itemType: "product", metadata: {} }];
     });
     setTotalOverride(""); setError(""); setNotice(`${product.name} aggiunto automaticamente al carrello.`);
   }

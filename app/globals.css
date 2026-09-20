@@ -515,6 +515,8 @@ td small { margin-top: .16rem; font-size: .62rem; }
 .analytics-filters { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: .8rem; margin-bottom: 1rem; }
 .analytics-stores .panel { min-width: 0; }
 .store-bar-note { display: block; margin-top: .1rem; color: var(--ink-soft); font-size: .68rem; font-weight: 700; }
+.price-was { text-decoration: line-through; color: var(--ink-soft); font-size: .85em; font-weight: 600; margin-left: .25rem; }
+.price-now { color: var(--success); font-weight: 850; }
 .analytics-trend { display: flex; align-items: flex-end; gap: .35rem; height: 210px; margin-top: 1rem; }
 .analytics-col { flex: 1 1 0; min-width: 0; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: .45rem; }
 .analytics-col-stack { width: 100%; max-width: 30px; display: flex; flex-direction: column; justify-content: flex-end; border-radius: 6px 6px 0 0; overflow: hidden; background: var(--surface-2); }

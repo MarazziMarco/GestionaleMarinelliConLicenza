@@ -181,6 +181,9 @@ async function runMigrations() {
   await db.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password INTEGER NOT NULL DEFAULT 1`).run();
   await db.prepare(`ALTER TABLE customers ADD COLUMN IF NOT EXISTS active INTEGER NOT NULL DEFAULT 1`).run();
   await db.prepare(`ALTER TABLE inventory ADD COLUMN IF NOT EXISTS reorder_level INTEGER NOT NULL DEFAULT 2`).run();
+  // Sconti/promozioni prodotti: prezzo resta il listino, lo sconto è additivo e a tempo.
+  await db.prepare(`ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_percent double precision NOT NULL DEFAULT 0`).run();
+  await db.prepare(`ALTER TABLE products ADD COLUMN IF NOT EXISTS discount_expires_at TEXT`).run();
   await db.prepare(`ALTER TABLE transfer_items ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT ''`).run();
   await db.prepare(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'accepted'`).run();
   await db.prepare(`ALTER TABLE transfers ADD COLUMN IF NOT EXISTS note TEXT`).run();
