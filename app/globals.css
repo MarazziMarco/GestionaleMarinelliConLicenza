@@ -553,11 +553,25 @@ td small { margin-top: .16rem; font-size: .62rem; }
 .job-status.error { background: var(--danger-bg); color: var(--danger); }
 .job-status.queued, .job-status.processing { background: #2a210d; color: #ffd36a; }
 .compact-alert { margin: 0 0 .8rem; font-size: .72rem; overflow-wrap: anywhere; }
-.fiscal-downloads { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; }
-.fiscal-downloads p { margin-bottom: 0; }
-.fiscal-download-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .55rem; }
-.fiscal-install-note { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: start; gap: .9rem; border-color: #b5d3df; background: var(--surface-2); }
-.fiscal-install-note strong { color: var(--green-dark); font-size: .78rem; text-transform: uppercase; }
+.fiscal-downloads { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 1.5rem; margin-top: 1rem; padding: 2.2rem 2rem; }
+.fiscal-downloads-head { max-width: 560px; }
+.fiscal-downloads-head p { margin-bottom: 0; }
+.fiscal-package-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 230px)); gap: 1.1rem; width: 100%; max-width: 560px; }
+.fiscal-package { display: flex; flex-direction: column; align-items: center; gap: .25rem; padding: 1.6rem 1.1rem 1.3rem; border-radius: 18px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); text-decoration: none; transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease; }
+.fiscal-package:hover { transform: translateY(-3px); border-color: var(--green); box-shadow: 0 14px 32px rgba(0,0,0,.28); }
+.fiscal-package-icon { display: grid; place-items: center; width: 54px; height: 54px; border-radius: 15px; background: var(--green); color: #041016; margin-bottom: .55rem; }
+.fiscal-package-icon .material-symbols-rounded { font-size: 28px; }
+.fiscal-package strong { font-size: 1.08rem; }
+.fiscal-package small { color: var(--ink-soft); font-size: .74rem; font-weight: 750; }
+.fiscal-package-cta { display: inline-flex; align-items: center; gap: .35rem; margin-top: .85rem; padding: .55rem 1rem; border-radius: 999px; background: var(--green); color: #041016; font-weight: 850; font-size: .8rem; box-shadow: 0 8px 22px rgba(0,0,0,.18); }
+.fiscal-package-cta .material-symbols-rounded { font-size: 18px; }
+.fiscal-guide-link { display: inline-flex; align-items: center; gap: .4rem; color: var(--green); font-weight: 800; font-size: .82rem; text-decoration: none; }
+.fiscal-guide-link:hover { text-decoration: underline; }
+.fiscal-guide-link .material-symbols-rounded { font-size: 18px; }
+.fiscal-install-note { display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 1rem; border-color: #b5d3df; background: var(--surface-2); }
+.fiscal-install-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 13px; background: var(--green); color: #041016; }
+.fiscal-install-icon .material-symbols-rounded { font-size: 24px; }
+.fiscal-install-note strong { display: block; margin-bottom: .25rem; color: var(--green-dark); font-size: .78rem; text-transform: uppercase; }
 .fiscal-install-note p { margin: 0; color: var(--ink-soft); font-size: .78rem; line-height: 1.55; }
 .fiscal-job-result { display: grid; grid-template-columns: 10px minmax(0,1fr); align-items: center; gap: .45rem; padding: .6rem .7rem; border-radius: 10px; background: rgba(255,255,255,.08); font-size: .72rem; }
 .fiscal-job-result small, .fiscal-job-result .text-button { grid-column: 2; color: var(--overlay-ink); overflow-wrap: anywhere; }
@@ -600,8 +614,8 @@ td small { margin-top: .16rem; font-size: .62rem; }
   .report-payment-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .report-comparison > summary.panel-title { grid-template-columns: 24px minmax(0,1fr); }
   .report-comparison .chart-legend { grid-column: 2; justify-content: flex-start; }
-  .fiscal-downloads { align-items: stretch; flex-direction: column; }
-  .fiscal-download-actions { justify-content: flex-start; }
+  .fiscal-package-grid { grid-template-columns: 1fr; }
+  .fiscal-install-note { grid-template-columns: 1fr; text-align: center; justify-items: center; }
   .metric-grid { grid-template-columns: 1fr 1fr; }
   .scanner-panel { grid-template-columns: 1fr; }
   .search-results { grid-template-columns: 1fr; }
