@@ -165,7 +165,7 @@ async function requireUser(request: Request) {
 }
 
 async function productRows() {
-  return all<ProductRow>(`SELECT p.id, p.sku, p.name, p.brand, p.category, p.color, p.size, p.price, p.variant_group AS variantGroup, p.photo_key AS photoKey,
+  return all<ProductRow>(`SELECT p.id, p.sku, p.name, p.brand, p.category, p.color, p.size, p.price, p.discount_percent AS discountPercent, p.discount_expires_at AS discountExpiresAt, p.variant_group AS variantGroup, p.photo_key AS photoKey,
     COALESCE(GROUP_CONCAT(DISTINCT pe.ean), '') AS eans,
     COALESCE(MAX(CASE WHEN i.store = 'Viterbo' THEN i.quantity END), 0) AS viterboQty,
     COALESCE(MAX(CASE WHEN i.store = 'Viterbo' THEN i.reserved END), 0) AS viterboReserved,
@@ -209,10 +209,13 @@ async function bootstrap(user: SessionUser) {
   const reorderSettingsRow = await database().prepare(`SELECT value FROM app_settings WHERE key = 'reorder_settings'`).first<{ value: string }>();
   let reorderSettings = { globalMinEnabled: false, globalMin: 2, suggestTransfers: true, transferSafety: 0 };
   if (reorderSettingsRow?.value) { try { reorderSettings = { ...reorderSettings, ...JSON.parse(reorderSettingsRow.value) }; } catch { /* valore non valido: usa i default */ } }
+  const discountSettingsRow = await database().prepare(`SELECT value FROM app_settings WHERE key = 'discount_settings'`).first<{ value: string }>();
+  let discountSettings = { unsoldDays: 365, minSold: 0 };
+  if (discountSettingsRow?.value) { try { discountSettings = { ...discountSettings, ...JSON.parse(discountSettingsRow.value) }; } catch { /* valore non valido: usa i default */ } }
   const accounts = user.role === "admin"
     ? await all<{ id: number; username: string; role: string; store: string | null; displayName: string }>(`SELECT id, username, role, store, display_name AS displayName FROM users ORDER BY username`)
     : [];
-  return { user, products, customers, sales, gifts, reservations, transfers, documents, saleItems, fiscalDevices, fiscalJobs, services, reorderSettings, accounts, generatedAt: new Date().toISOString() };
+  return { user, products, customers, sales, gifts, reservations, transfers, documents, saleItems, fiscalDevices, fiscalJobs, services, reorderSettings, discountSettings, accounts, generatedAt: new Date().toISOString() };
 }
 
 async function getImpl(request: Request) {
@@ -478,6 +481,34 @@ async function saveReorderSettings(user: SessionUser, body: JsonMap) {
   await database().prepare(`INSERT OR REPLACE INTO app_settings (key, value) VALUES ('reorder_settings', ?)`).bind(JSON.stringify(settings)).run();
   await logActivity({ user, action: "update", entity: "reorder_settings", detail: JSON.stringify(settings) });
   return json({ ok: true, reorderSettings: settings });
+}
+
+async function saveDiscountSettings(user: SessionUser, body: JsonMap) {
+  const denied = adminOnly(user); if (denied) return denied;
+  const settings = {
+    unsoldDays: Math.max(1, Math.round(Number(body.unsoldDays) || 365)),
+    minSold: Math.max(0, Math.round(Number(body.minSold) || 0)),
+  };
+  await database().prepare(`INSERT OR REPLACE INTO app_settings (key, value) VALUES ('discount_settings', ?)`).bind(JSON.stringify(settings)).run();
+  await logActivity({ user, action: "update", entity: "discount_settings", detail: JSON.stringify(settings) });
+  return json({ ok: true, discountSettings: settings });
+}
+
+// Sconto prodotti (livello modello: il client invia gli id di tutte le varianti).
+// percent = 0 azzera lo sconto. Copre sia lo sconto singolo sia quello di gruppo.
+async function setProductDiscount(user: SessionUser, body: JsonMap) {
+  const denied = adminOnly(user); if (denied) return denied;
+  const ids = arrayValue(body.productIds).map((value) => Math.round(numberValue(value))).filter((id) => id > 0);
+  if (!ids.length) return json({ error: "Nessun prodotto selezionato." }, 400);
+  const percent = Math.min(95, Math.max(0, Math.round(numberValue(body.percent) * 100) / 100));
+  const expiresAt = stringValue(body.expiresAt).trim();
+  if (expiresAt && !/^\d{4}-\d{2}-\d{2}$/.test(expiresAt)) return json({ error: "Data di scadenza non valida." }, 400);
+  const expiryValue = percent > 0 ? (expiresAt || null) : null;
+  for (const id of ids) {
+    await database().prepare(`UPDATE products SET discount_percent = ?, discount_expires_at = ? WHERE id = ?`).bind(percent, expiryValue, id).run();
+  }
+  await logActivity({ user, action: "update", entity: "product", detail: percent > 0 ? `Sconto ${percent}% su ${ids.length} articoli${expiresAt ? ` fino a ${expiresAt}` : ""}` : `Sconto rimosso da ${ids.length} articoli` });
+  return json({ ok: true });
 }
 
 async function updateProduct(user: SessionUser, body: JsonMap) {
@@ -1391,6 +1422,8 @@ async function postImpl(request: Request) {
     if (action === "deleteCustomer") return deleteCustomer(auth.user, body);
     if (action === "createGift") return createGift(auth.user, body);
   if (action === "saveReorderSettings") return saveReorderSettings(auth.user, body);
+    if (action === "saveDiscountSettings") return saveDiscountSettings(auth.user, body);
+    if (action === "setProductDiscount") return setProductDiscount(auth.user, body);
   if (action === "createService") return createService(auth.user, body);
     if (action === "updateService") return updateService(auth.user, body);
     if (action === "deleteService") return deleteService(auth.user, body);
