@@ -218,12 +218,23 @@ async function getImpl(request: Request) {
     return json({ transfer, items });
   }
   if (view === "activity") {
-    if (auth.user.role !== "admin") return json({ error: "Funzione riservata all'amministratore." }, 403);
+    // Admin: tutti i log (filtrabili per negozio dal client). Account negozio:
+    // solo il proprio negozio (ogni azione viene marcata con lo store dell'utente).
+    const scopeStore = auth.user.role === "admin" ? null : auth.user.store;
     const entity = url.searchParams.get("entity");
     const entityId = url.searchParams.get("entityId");
-    const activity = entity && entityId
-      ? await all(`SELECT id, created_at AS createdAt, username, action, entity, entity_id AS entityId, detail, store FROM activity_log WHERE entity = ? AND entity_id = ? ORDER BY id DESC LIMIT 200`, entity, Math.round(numberValue(entityId)))
-      : await all(`SELECT id, created_at AS createdAt, username, action, entity, entity_id AS entityId, detail, store FROM activity_log ORDER BY id DESC LIMIT 300`);
+    const columns = `SELECT id, created_at AS createdAt, username, action, entity, entity_id AS entityId, detail, store FROM activity_log`;
+    let activity;
+    if (entity && entityId) {
+      const id = Math.round(numberValue(entityId));
+      activity = scopeStore
+        ? await all(`${columns} WHERE entity = ? AND entity_id = ? AND store = ? ORDER BY id DESC LIMIT 200`, entity, id, scopeStore)
+        : await all(`${columns} WHERE entity = ? AND entity_id = ? ORDER BY id DESC LIMIT 200`, entity, id);
+    } else {
+      activity = scopeStore
+        ? await all(`${columns} WHERE store = ? ORDER BY id DESC LIMIT 300`, scopeStore)
+        : await all(`${columns} ORDER BY id DESC LIMIT 300`);
+    }
     return json({ activity }, 200, { "Cache-Control": "private, no-store, max-age=0" });
   }
   if (view === "customer") {

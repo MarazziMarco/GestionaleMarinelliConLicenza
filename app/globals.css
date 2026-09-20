@@ -190,6 +190,10 @@ small { color: var(--ink-soft); }
 .customer-type-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .45rem; padding: .35rem; border-radius: 14px; background: var(--surface-2); }
 .customer-type-tabs button { min-height: 42px; border: 0; border-radius: 10px; background: transparent; color: var(--ink-soft); font-weight: 850; }
 .customer-type-tabs button.active { background: var(--panel); color: var(--green); box-shadow: 0 4px 14px rgba(0,38,56,.1); }
+.log-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: .8rem; margin-bottom: .9rem; }
+.log-filters .field { flex: 1 1 200px; margin: 0; }
+.log-filters-reset { flex: 0 0 auto; min-height: 44px; display: inline-flex; align-items: center; gap: .35rem; }
+.log-count { margin: 0 0 .8rem; color: var(--ink-soft); font-size: .76rem; font-weight: 800; }
 .section-tabs { margin-bottom: .9rem; }
 .section-tabs button { display: flex; align-items: center; justify-content: center; gap: .45rem; }
 .section-tabs b { min-width: 24px; padding: .18rem .35rem; border-radius: 999px; background: var(--mint); font-size: .68rem; }
