@@ -90,13 +90,13 @@ export function createPdf(options: PdfOptions) {
     }
     const totalLine = /^(TOTALE|SALDO|IMPORTO DA PAGARE)/i.test(line);
     if (totalLine) {
-      commands.push(`q 0 g 42 ${y - 5} 511 ${lineHeight + 5} re f Q`);
+      commands.push(`q 0 g 42 ${y - 4} 511 ${lineHeight} re f Q`);
       const size = Math.min(11, lineHeight - 2);
       const [left, right] = line.split("\t");
       commands.push(textCommand((left ?? line).slice(0, 92), 51, y, size, true, "1"));
       if (right !== undefined) commands.push(textRight(right, 545, y, size, true, "1"));
     } else {
-      if (index % 2 === 1) commands.push(`q 0.94 g 42 ${y - 5} 511 ${lineHeight + 4} re f Q`);
+      if (index % 2 === 1) commands.push(`q 0.94 g 42 ${y - 4} 511 ${lineHeight} re f Q`);
       const size = Math.min(10, lineHeight - 1);
       const [left, right] = line.split("\t");
       const emphasized = /^(Numero|Codice|Cliente|Data|Negozio|Valore|Acconto|Totale concordato|Prodotti prenotati|Prodotti da risuolare|Descrizione|Mittente|Ricevente|Vettore|Causale)/i.test(left ?? line);
