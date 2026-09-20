@@ -7,12 +7,12 @@ async function all<T>(sql: string, ...bindings: unknown[]) {
   return result.results ?? [];
 }
 
-function pdfResponse(bytes: Uint8Array, filename: string) {
+function pdfResponse(bytes: Uint8Array, filename: string, disposition: "attachment" | "inline" = "attachment") {
   const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   return new Response(buffer, {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename.replace(/[^a-zA-Z0-9_.-]/g, "-")}"`,
+      "Content-Disposition": `${disposition}; filename="${filename.replace(/[^a-zA-Z0-9_.-]/g, "-")}"`,
       "Cache-Control": "no-store",
     },
   });
@@ -107,13 +107,20 @@ async function getImpl(request: Request) {
       `Pagamento: ${document.paymentMethod === "bank" ? "Bonifico bancario" : document.paymentMethod === "card" ? "Carta" : "Contanti"}`,
       "------------------------------------------------------------",
       "ARTICOLI - PREZZI UNITARI E IMPONIBILI IVA ESCLUSA",
-      ...items.map((item) => `${item.quantity} x ${item.description.slice(0, 32)} - ${euro(item.unitPrice)} - IVA ${item.taxRate}% - ${euro(item.grossTotal)}`),
-      "------------------------------------------------------------",
-      `Imponibile: ${euro(document.netTotal)}`,
-      `IVA: ${euro(document.taxTotal)}`,
-      `TOTALE DOCUMENTO: ${euro(document.total)}`,
     ];
-    return pdfResponse(createPdf({ title: document.type === "invoice" ? "Fattura" : "Preventivo", subtitle: document.number, lines }), `${document.number}.pdf`);
+    const table = {
+      headers: ["Descrizione", "Qta", "Prezzo", "IVA%", "Totale"],
+      x: [51, 372, 432, 478, 545],
+      align: ["l", "r", "r", "r", "r"] as ("l" | "r")[],
+      rows: items.map((item) => [item.description, String(item.quantity), euro(item.unitPrice), `${item.taxRate}%`, euro(item.grossTotal)]),
+    };
+    const totals = [
+      { label: "Imponibile", value: euro(document.netTotal) },
+      { label: "IVA", value: euro(document.taxTotal) },
+      { label: "TOTALE DOCUMENTO", value: euro(document.total), strong: true },
+    ];
+    const disposition = url.searchParams.get("inline") === "1" ? "inline" : "attachment";
+    return pdfResponse(createPdf({ title: document.type === "invoice" ? "Fattura" : "Preventivo", subtitle: document.number, lines, table, totals }), `${document.number}.pdf`, disposition);
   }
   return json({ error: "Tipo di documento non disponibile." }, 404);
 }

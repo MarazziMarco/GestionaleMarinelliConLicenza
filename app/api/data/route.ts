@@ -144,6 +144,20 @@ async function all<T>(sql: string, ...bindings: unknown[]) {
   return result.results ?? [];
 }
 
+// Numero documento progressivo per anno: FAT 2026/001, PREV 2026/001.
+// Il progressivo riparte ogni anno ed è separato per fatture e preventivi.
+async function nextDocumentNumber(type: string): Promise<string> {
+  const year = new Date().getFullYear();
+  const prefix = type === "invoice" ? "FAT" : "PREV";
+  const rows = await all<{ number: string }>(`SELECT number FROM business_documents WHERE type = ? AND number LIKE ?`, type, `${prefix} ${year}/%`);
+  let max = 0;
+  for (const row of rows) {
+    const parsed = parseInt(String(row.number).split("/").pop() ?? "", 10);
+    if (Number.isFinite(parsed) && parsed > max) max = parsed;
+  }
+  return `${prefix} ${year}/${String(max + 1).padStart(3, "0")}`;
+}
+
 async function requireUser(request: Request) {
   const user = await currentUser(request);
   if (!user) return { response: json({ error: "Sessione scaduta." }, 401), user: null };
@@ -971,7 +985,7 @@ async function createSale(user: SessionUser, body: JsonMap) {
   }
   let invoiceDocument: { id: number; number: string } | null = null;
   if (bank > 0 && fiscalDocumentType === "invoice" && invoiceRecipient) {
-    const number = idCode("FAT");
+    const number = await nextDocumentNumber("invoice");
     const netTotal = Math.round(total / 1.22 * 100) / 100;
     const taxTotal = Math.round((total - netTotal) * 100) / 100;
     const recipient = invoiceRecipient.customerType === "company" ? invoiceRecipient.companyName : `${invoiceRecipient.firstName} ${invoiceRecipient.lastName}`.trim();
@@ -1324,7 +1338,7 @@ async function createDocument(user: SessionUser, body: JsonMap) {
   const netTotal = Math.round(totals.net * 100) / 100;
   const taxTotal = Math.round(totals.tax * 100) / 100;
   const total = Math.round((netTotal + taxTotal) * 100) / 100;
-  const number = idCode(type === "invoice" ? "FAT" : "PREV");
+  const number = await nextDocumentNumber(type);
   const result = await database().prepare(`INSERT INTO business_documents (number, type, customer_id, recipient, recipient_vat_number, recipient_pec, recipient_sdi_code, recipient_address, recipient_postal_code, recipient_city, recipient_province, origin, payment_method, net_total, tax_total, total, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .bind(number, type, body.customerId == null ? null : numberValue(body.customerId), recipient, stringValue(body.recipientVatNumber), stringValue(body.recipientPec), stringValue(body.recipientSdiCode), stringValue(body.recipientAddress), stringValue(body.recipientPostalCode), stringValue(body.recipientCity), stringValue(body.recipientProvince), stringValue(body.origin, "Ordine"), paymentMethod, netTotal, taxTotal, total, user.id, new Date().toISOString()).run();
   const documentId = result.meta?.last_row_id;

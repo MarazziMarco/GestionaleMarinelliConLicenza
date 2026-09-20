@@ -1,10 +1,21 @@
 import { LOGO_JPEG_BASE64, LOGO_JPEG_WIDTH, LOGO_JPEG_HEIGHT } from "./logo-data";
 
+type PdfTable = {
+  headers: string[];
+  rows: string[][];
+  x: number[]; // ancora orizzontale per colonna (sinistra se align 'l', destra se 'r')
+  align: ("l" | "r")[];
+};
+
+type PdfTotal = { label: string; value: string; strong?: boolean };
+
 type PdfOptions = {
   title: string;
   subtitle?: string;
   lines: string[];
   barcode?: string | null;
+  table?: PdfTable;
+  totals?: PdfTotal[];
 };
 
 const eanL = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011", "0110111", "0001011"];
@@ -66,9 +77,10 @@ export function createPdf(options: PdfOptions) {
   ];
   if (options.subtitle) commands.push(textRight(options.subtitle, 547, 684, 9, false, "0.28"));
 
+  const hasTable = Boolean(options.table);
   const visibleLines = options.lines.slice(0, 42);
   const lowerBoundary = options.barcode ? 186 : 58;
-  const lineHeight = Math.max(11, Math.min(17, (646 - lowerBoundary) / Math.max(visibleLines.length, 1)));
+  const lineHeight = hasTable ? 15 : Math.max(11, Math.min(17, (646 - lowerBoundary) / Math.max(visibleLines.length, 1)));
   let y = 646;
   visibleLines.forEach((line, index) => {
     if (line.startsWith("---")) {
@@ -99,6 +111,46 @@ export function createPdf(options: PdfOptions) {
     y -= lineHeight;
   });
   if (options.lines.length > visibleLines.length) commands.push(textCommand(`Altre ${options.lines.length - visibleLines.length} voci non visualizzate`, 51, y, 9, true, "0"));
+
+  if (options.table) {
+    const table = options.table;
+    const rowH = 16;
+    y -= 8;
+    // Intestazione tabella su barra scura.
+    commands.push(`q 0 g 42 ${y - 5} 511 ${rowH} re f Q`);
+    table.headers.forEach((header, index) => {
+      if (table.align[index] === "r") commands.push(textRight(header, table.x[index], y, 8.5, true, "1"));
+      else commands.push(textCommand(header, table.x[index], y, 8.5, true, "1"));
+    });
+    y -= rowH;
+    const maxRows = Math.min(table.rows.length, 30);
+    for (let ri = 0; ri < maxRows; ri += 1) {
+      const row = table.rows[ri];
+      if (ri % 2 === 1) commands.push(`q 0.94 g 42 ${y - 5} 511 ${rowH} re f Q`);
+      row.forEach((cell, index) => {
+        if (table.align[index] === "r") commands.push(textRight(cell, table.x[index], y, 8.5, false));
+        else commands.push(textCommand(cell.slice(0, 58), table.x[index], y, 8.5, false));
+      });
+      y -= rowH;
+    }
+    if (table.rows.length > maxRows) { commands.push(textCommand(`Altre ${table.rows.length - maxRows} righe non visualizzate`, 51, y, 8, true, "0")); y -= rowH; }
+  }
+
+  if (options.totals) {
+    const rowH = 17;
+    y -= 8;
+    for (const total of options.totals) {
+      if (total.strong) {
+        commands.push(`q 0 g 300 ${y - 5} 253 ${rowH} re f Q`);
+        commands.push(textCommand(total.label, 310, y, 11, true, "1"));
+        commands.push(textRight(total.value, 545, y, 11, true, "1"));
+      } else {
+        commands.push(textRight(total.label, 470, y, 10, false, "0.2"));
+        commands.push(textRight(total.value, 545, y, 10, false));
+      }
+      y -= rowH;
+    }
+  }
 
   const bits = options.barcode ? barcodeBits(options.barcode) : null;
   if (bits && options.barcode) {
