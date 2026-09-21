@@ -7,6 +7,7 @@ import NewCashRegister, { localFiscalBridgeRequest, ReturnForm, type CartItem as
 import PwaInstallButton from "./pwa-install";
 import { supabaseBrowser } from "../lib/supabase-client";
 import { emailForUsername } from "../lib/user-profiles";
+import { discountActive, effectivePrice } from "../lib/pricing";
 import { isClientTestMode } from "./test-mode-banner";
 
 type Store = "Viterbo" | "Gran Sasso";
@@ -29,9 +30,6 @@ const money = (value: number) => new Intl.NumberFormat("it-IT", { style: "curren
 const dateTime = (value: string) => new Date(value).toLocaleString("it-IT", { dateStyle: "short", timeStyle: "short" });
 const todayPlusYear = () => new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
 const keyId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-type Discountable = { price: number; discountPercent?: number; discountExpiresAt?: string | null };
-const discountActive = (p: Discountable) => (p.discountPercent ?? 0) > 0 && (!p.discountExpiresAt || new Date(`${p.discountExpiresAt}T23:59:59`) >= new Date());
-const effectivePrice = (p: Discountable) => discountActive(p) ? Math.round(p.price * (1 - (p.discountPercent ?? 0) / 100) * 100) / 100 : p.price;
 const variantCollator = new Intl.Collator("it", { numeric: true, sensitivity: "base" });
 const customerLabel = (customer: Customer) => customer.customerType === "company" ? customer.companyName : `${customer.firstName} ${customer.lastName}`.trim();
 

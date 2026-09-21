@@ -2,6 +2,7 @@ import { currentUser, database, ean13, ensureDatabase, hashToken, idCode, isTest
 import { getBucket } from "../../../lib/storage";
 import { withDbScope } from "../../../lib/db";
 import { createAuthUser, setAuthUserPassword, deleteAuthUser } from "../../../lib/supabase-server";
+import { computeNextDocumentNumber } from "../../../lib/pricing";
 
 type JsonMap = Record<string, unknown>;
 type CartItem = {
@@ -150,12 +151,7 @@ async function nextDocumentNumber(type: string): Promise<string> {
   const year = new Date().getFullYear();
   const prefix = type === "invoice" ? "FAT" : "PREV";
   const rows = await all<{ number: string }>(`SELECT number FROM business_documents WHERE type = ? AND number LIKE ?`, type, `${prefix} ${year}/%`);
-  let max = 0;
-  for (const row of rows) {
-    const parsed = parseInt(String(row.number).split("/").pop() ?? "", 10);
-    if (Number.isFinite(parsed) && parsed > max) max = parsed;
-  }
-  return `${prefix} ${year}/${String(max + 1).padStart(3, "0")}`;
+  return computeNextDocumentNumber(rows.map((row) => row.number), type, year);
 }
 
 async function requireUser(request: Request) {

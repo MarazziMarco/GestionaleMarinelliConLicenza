@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
+import { effectivePrice, giftRedemptionAmount } from "../lib/pricing";
 
 type Store = "Viterbo" | "Gran Sasso";
 type User = { role: "admin" | "viterbo" | "gran_sasso"; store: Store | null };
@@ -42,9 +43,6 @@ export type CartItem = {
 };
 export type PendingCashAction = { kind: "reservationDeposit" | "reservationDelivery" | "return" | "giftIssue"; reservationId?: number; label: string; lines: CartItem[] };
 
-// Prezzo effettivo: applica lo sconto promozionale se attivo e non scaduto.
-const productDiscountActive = (p: Product) => (p.discountPercent ?? 0) > 0 && (!p.discountExpiresAt || new Date(`${p.discountExpiresAt}T23:59:59`) >= new Date());
-const effectivePrice = (p: Product) => productDiscountActive(p) ? Math.round(p.price * (1 - (p.discountPercent ?? 0) / 100) * 100) / 100 : p.price;
 
 type ReservationDraftLine = {
   key: string;
@@ -708,7 +706,7 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
         // Il buono si applica come riga sconto: lo scontrino resta della sola differenza.
         if (cart.some((item) => item.itemType === "gift_redemption" && item.metadata.code === result.record.code)) throw new Error("Questo buono è già applicato al carrello.");
         const balance = Number(result.record.balance) || 0;
-        const use = Math.round(Math.min(balance, Math.max(0, total)) * 100) / 100;
+        const use = giftRedemptionAmount(balance, total);
         if (use <= 0) throw new Error("Aggiungi prima i prodotti, poi applica il buono.");
         setCart((current) => [...current, { key: keyId(), productId: null, description: `Buono ${result.record.code}`, quantity: 1, unitPrice: -use, discountPercent: 0, itemType: "gift_redemption", locked: true, metadata: { code: result.record.code } }]);
         setTotalOverride("");
