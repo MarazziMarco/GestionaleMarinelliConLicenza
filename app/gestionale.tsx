@@ -8,6 +8,7 @@ import PwaInstallButton from "./pwa-install";
 import { supabaseBrowser } from "../lib/supabase-client";
 import { emailForUsername } from "../lib/user-profiles";
 import { discountActive, effectivePrice } from "../lib/pricing";
+import { computeReorderRows, computeUnsoldGroups } from "../lib/inventory";
 import { isClientTestMode } from "./test-mode-banner";
 
 type Store = "Viterbo" | "Gran Sasso";
@@ -248,23 +249,12 @@ function ReorderList({ data, reload }: { data: Bootstrap; reload: () => Promise<
   const isAdmin = data.user.role === "admin";
   const brands = useMemo(() => [...new Set(data.products.map((product) => product.brand).filter(Boolean))].sort((a, b) => variantCollator.compare(a, b)), [data.products]);
   const categories = useMemo(() => [...new Set(data.products.map((product) => product.category).filter(Boolean))].sort((a, b) => variantCollator.compare(a, b)), [data.products]);
-  const allRows = useMemo<ReorderRow[]>(() => data.products.flatMap((product) => {
-    const stores: Store[] = store === "Tutti" ? ["Viterbo", "Gran Sasso"] : [store];
-    return stores.flatMap((currentStore) => {
-      const viterbo = product.viterboQty - product.viterboReserved;
-      const granSasso = product.granSassoQty - product.granSassoReserved;
-      const available = currentStore === "Viterbo" ? viterbo : granSasso;
-      const minimum = settings.globalMinEnabled ? settings.globalMin : (currentStore === "Viterbo" ? product.viterboReorderLevel : product.granSassoReorderLevel);
-      if (available > minimum) return [];
-      const otherStore: Store = currentStore === "Viterbo" ? "Gran Sasso" : "Viterbo";
-      const otherAvailable = currentStore === "Viterbo" ? granSasso : viterbo;
-      const otherMinimum = settings.globalMinEnabled ? settings.globalMin : (currentStore === "Viterbo" ? product.granSassoReorderLevel : product.viterboReorderLevel);
-      const suggested = Math.max(1, minimum + 1 - available);
-      const transferAmount = settings.suggestTransfers ? Math.min(suggested, Math.max(0, otherAvailable - otherMinimum - settings.transferSafety)) : 0;
-      const priority: ReorderRow["priority"] = available <= 0 ? "urgent" : available <= Math.max(1, Math.floor(minimum / 2)) ? "critical" : "low";
-      return [{ key: `${product.id}-${currentStore}`, product, store: currentStore, available, minimum, suggested, otherStore, otherAvailable, transferAmount, priority }];
-    });
-  }).sort((left, right) => ({ urgent: 0, critical: 1, low: 2 }[left.priority] - { urgent: 0, critical: 1, low: 2 }[right.priority] || (left.available - left.minimum) - (right.available - right.minimum) || variantCollator.compare(`${left.product.brand} ${left.product.name} ${left.product.color} ${left.product.size}`, `${right.product.brand} ${right.product.name} ${right.product.color} ${right.product.size}`))), [data.products, store, settings.globalMinEnabled, settings.globalMin, settings.suggestTransfers, settings.transferSafety]);
+  const allRows = useMemo<ReorderRow[]>(() => {
+    const byId = new Map(data.products.map((product) => [product.id, product] as const));
+    return computeReorderRows(data.products, settings, store)
+      .map((row) => ({ ...row, key: `${row.productId}-${row.store}`, product: byId.get(row.productId)! }))
+      .sort((left, right) => ({ urgent: 0, critical: 1, low: 2 }[left.priority] - { urgent: 0, critical: 1, low: 2 }[right.priority] || (left.available - left.minimum) - (right.available - right.minimum) || variantCollator.compare(`${left.product.brand} ${left.product.name} ${left.product.color} ${left.product.size}`, `${right.product.brand} ${right.product.name} ${right.product.color} ${right.product.size}`)));
+  }, [data.products, store, settings.globalMinEnabled, settings.globalMin, settings.suggestTransfers, settings.transferSafety]);
   const rows = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("it");
     return allRows.filter((row) => (!normalized || searchableProduct(row.product).includes(normalized)) && (brand === "Tutte" || row.product.brand === brand) && (category === "Tutte" || row.product.category === category) && (priority === "Tutte" || priority === "Esauriti" && row.priority === "urgent" || priority === "Critici" && row.priority === "critical" || priority === "Trasferibili" && row.transferAmount > 0));
@@ -632,24 +622,17 @@ function UnsoldPromotions({ data, reload }: { data: Bootstrap; reload: () => Pro
   const [showBulk, setShowBulk] = useState(false);
   const daysNum = Math.max(1, Number(days) || 365);
   const minSoldNum = Math.max(0, Number(minSold) || 0);
-  const cutoff = Date.now() - daysNum * 86400000;
   const groups = useMemo(() => {
-    const soldByGroup = new Map<string, number>();
-    for (const it of data.saleItems ?? []) {
-      if (it.itemType !== "product" || new Date(it.createdAt).getTime() < cutoff) continue;
-      const k = it.variantGroup ? `g:${it.variantGroup}` : `p:${it.productId}`;
-      soldByGroup.set(k, (soldByGroup.get(k) || 0) + it.quantity);
-    }
-    const map = new Map<string, { key: string; name: string; brand: string; category: string; listino: number; ids: number[]; stock: number; discountPercent: number; discountExpiresAt: string | null }>();
-    for (const p of data.products) {
-      const k = p.variantGroup ? `g:${p.variantGroup}` : `p:${p.id}`;
-      const g = map.get(k) ?? { key: k, name: p.name, brand: p.brand, category: p.category, listino: p.price, ids: [], stock: 0, discountPercent: p.discountPercent ?? 0, discountExpiresAt: p.discountExpiresAt ?? null };
-      g.ids.push(p.id); g.stock += p.viterboQty + p.granSassoQty;
-      if ((p.discountPercent ?? 0) > g.discountPercent) { g.discountPercent = p.discountPercent ?? 0; g.discountExpiresAt = p.discountExpiresAt ?? null; }
-      map.set(k, g);
-    }
-    return [...map.values()].map((g) => ({ ...g, sold: soldByGroup.get(g.key) || 0 })).filter((g) => g.stock > 0 && g.sold <= minSoldNum).sort((a, b) => a.sold - b.sold || b.stock - a.stock);
-  }, [data.products, data.saleItems, cutoff, minSoldNum]);
+    const byId = new Map(data.products.map((p) => [p.id, p] as const));
+    return computeUnsoldGroups(data.products, data.saleItems ?? [], { unsoldDays: daysNum, minSold: minSoldNum }, Date.now())
+      .map((g) => {
+        const first = byId.get(g.ids[0]);
+        let discountPercent = 0; let discountExpiresAt: string | null = null;
+        for (const id of g.ids) { const p = byId.get(id); if (p && (p.discountPercent ?? 0) > discountPercent) { discountPercent = p.discountPercent ?? 0; discountExpiresAt = p.discountExpiresAt ?? null; } }
+        return { key: g.key, name: first?.name ?? "", brand: first?.brand ?? "", category: first?.category ?? "", listino: first?.price ?? 0, ids: g.ids, stock: g.stock, sold: g.sold, discountPercent, discountExpiresAt };
+      })
+      .sort((a, b) => a.sold - b.sold || b.stock - a.stock);
+  }, [data.products, data.saleItems, daysNum, minSoldNum]);
   async function saveSettings() {
     setError(""); setSavedMsg("");
     if (isClientTestMode()) { setError("Modalità TEST attiva: parametri non salvati."); return; }
@@ -1123,33 +1106,13 @@ function DashboardNew({ data, goTo, reload }: { data: Bootstrap; goTo: (page: st
   const available = data.products.reduce((sum, p) => sum + p.viterboQty + p.granSassoQty - p.viterboReserved - p.granSassoReserved, 0);
   const settings = data.reorderSettings ?? { globalMinEnabled: false, globalMin: 2, suggestTransfers: true, transferSafety: 0 };
   const reorderRows = useMemo(() => {
-    const rows: { product: Product; store: Store; available: number; minimum: number; suggested: number; otherStore: Store; transferAmount: number; urgent: boolean }[] = [];
-    for (const p of data.products) {
-      for (const store of ["Viterbo", "Gran Sasso"] as Store[]) {
-        const avail = store === "Viterbo" ? p.viterboQty - p.viterboReserved : p.granSassoQty - p.granSassoReserved;
-        const minimum = settings.globalMinEnabled ? settings.globalMin : (store === "Viterbo" ? p.viterboReorderLevel : p.granSassoReorderLevel);
-        if (avail > minimum) continue;
-        const otherStore: Store = store === "Viterbo" ? "Gran Sasso" : "Viterbo";
-        const otherAvail = otherStore === "Viterbo" ? p.viterboQty - p.viterboReserved : p.granSassoQty - p.granSassoReserved;
-        const otherMin = settings.globalMinEnabled ? settings.globalMin : (otherStore === "Viterbo" ? p.viterboReorderLevel : p.granSassoReorderLevel);
-        const suggested = Math.max(1, minimum + 1 - avail);
-        const transferAmount = settings.suggestTransfers ? Math.min(suggested, Math.max(0, otherAvail - otherMin - settings.transferSafety)) : 0;
-        rows.push({ product: p, store, available: avail, minimum, suggested, otherStore, transferAmount, urgent: avail <= 0 });
-      }
-    }
-    return rows.sort((a, b) => (Number(b.urgent) - Number(a.urgent)) || (a.available - a.minimum) - (b.available - b.minimum));
+    const byId = new Map(data.products.map((p) => [p.id, p] as const));
+    return computeReorderRows(data.products, settings)
+      .map((row) => ({ ...row, product: byId.get(row.productId)! }))
+      .sort((a, b) => (Number(b.priority === "urgent") - Number(a.priority === "urgent")) || (a.available - a.minimum) - (b.available - b.minimum));
   }, [data.products, settings.globalMinEnabled, settings.globalMin, settings.suggestTransfers, settings.transferSafety]);
   const suggestedTransfers = reorderRows.filter((r) => r.transferAmount > 0);
-  const unsoldCount = useMemo(() => {
-    const ds = data.discountSettings ?? { unsoldDays: 365, minSold: 0 };
-    const cutoff = Date.now() - ds.unsoldDays * 86400000;
-    const sold = new Map<string, number>();
-    for (const it of data.saleItems ?? []) { if (it.itemType !== "product" || new Date(it.createdAt).getTime() < cutoff) continue; const k = it.variantGroup ? `g:${it.variantGroup}` : `p:${it.productId}`; sold.set(k, (sold.get(k) || 0) + it.quantity); }
-    const groups = new Map<string, number>();
-    for (const p of data.products) { const k = p.variantGroup ? `g:${p.variantGroup}` : `p:${p.id}`; groups.set(k, (groups.get(k) || 0) + p.viterboQty + p.granSassoQty); }
-    let n = 0; for (const [k, stock] of groups) if (stock > 0 && (sold.get(k) || 0) <= ds.minSold) n += 1;
-    return n;
-  }, [data.products, data.saleItems, data.discountSettings]);
+  const unsoldCount = useMemo(() => computeUnsoldGroups(data.products, data.saleItems ?? [], data.discountSettings ?? { unsoldDays: 365, minSold: 0 }, Date.now()).length, [data.products, data.saleItems, data.discountSettings]);
   const pendingTransfers = data.transfers.filter((t) => t.status === "pending");
   const pickups = data.reservations.filter((r) => r.status === "open").sort((a, b) => (a.expectedDelivery || "9999").localeCompare(b.expectedDelivery || "9999")).slice(0, 8);
   const now = Date.now();
@@ -1170,7 +1133,7 @@ function DashboardNew({ data, goTo, reload }: { data: Bootstrap; goTo: (page: st
       <button type="button" className={`dash-action reorder ${reorderOpen ? "open" : ""}`} onClick={() => setReorderOpen((v) => !v)}><div><p className="eyebrow">MAGAZZINO</p><strong>{reorderRows.length}</strong><span>Articoli da riordinare</span></div><MaterialIcon>{reorderOpen ? "expand_less" : "warning"}</MaterialIcon></button>
       {showUnsoldCard && <button type="button" className="dash-action discount" onClick={() => goTo("unsold")}><div><p className="eyebrow">PROMOZIONI</p><strong>{unsoldCount}</strong><span>Articoli da scontare</span></div><MaterialIcon>sell</MaterialIcon></button>}
     </div>
-    {reorderOpen && <div className="panel"><div className="panel-title"><div><p className="eyebrow">DA RIORDINARE</p><h2>Sotto scorta</h2></div><button className="secondary small" onClick={() => goTo("reorder")}>Apri pagina</button></div>{reorderRows.length ? <div className="table-wrap"><table><thead><tr><th>Prodotto</th><th>Negozio</th><th>Disp.</th><th>Min.</th><th>Da ordinare</th></tr></thead><tbody>{reorderRows.slice(0, 12).map((r) => <tr key={`${r.product.id}-${r.store}`} className={r.urgent ? "warehouse-low" : ""}><td><strong>{r.product.brand ? `${r.product.brand} · ` : ""}{r.product.name}</strong><small>{r.product.color} · {r.product.size}</small></td><td><span className={`store-chip ${r.store === "Viterbo" ? "viterbo" : "gran-sasso"}`}>{r.store}</span></td><td><b className={r.available <= 0 ? "negative" : ""}>{r.available}</b></td><td>{r.minimum}</td><td><strong>{r.suggested}</strong></td></tr>)}</tbody></table></div> : <Empty>Tutto a posto, niente sotto scorta.</Empty>}</div>}
+    {reorderOpen && <div className="panel"><div className="panel-title"><div><p className="eyebrow">DA RIORDINARE</p><h2>Sotto scorta</h2></div><button className="secondary small" onClick={() => goTo("reorder")}>Apri pagina</button></div>{reorderRows.length ? <div className="table-wrap"><table><thead><tr><th>Prodotto</th><th>Negozio</th><th>Disp.</th><th>Min.</th><th>Da ordinare</th></tr></thead><tbody>{reorderRows.slice(0, 12).map((r) => <tr key={`${r.product.id}-${r.store}`} className={r.priority === "urgent" ? "warehouse-low" : ""}><td><strong>{r.product.brand ? `${r.product.brand} · ` : ""}{r.product.name}</strong><small>{r.product.color} · {r.product.size}</small></td><td><span className={`store-chip ${r.store === "Viterbo" ? "viterbo" : "gran-sasso"}`}>{r.store}</span></td><td><b className={r.available <= 0 ? "negative" : ""}>{r.available}</b></td><td>{r.minimum}</td><td><strong>{r.suggested}</strong></td></tr>)}</tbody></table></div> : <Empty>Tutto a posto, niente sotto scorta.</Empty>}</div>}
     <div className="warehouse-grid">
       <div className="panel"><div className="panel-title"><div><p className="eyebrow">TRASFERIMENTI</p><h2>Richieste da gestire</h2></div>{pendingTransfers.length > 0 && <span className="count-pill">{pendingTransfers.length}</span>}</div>{pendingTransfers.length ? pendingTransfers.map((t) => <div className="document-row" key={t.id}><span><strong>{t.code}</strong><small>{t.fromStore} → {t.toStore} · {t.totalQuantity} pz</small></span>{isAdmin ? <div className="table-actions"><button className="primary small" onClick={() => void acceptTransfer(t)}>Completa</button><button className="text-button negative" onClick={() => void refuseTransfer(t)}>Rifiuta</button></div> : <span className="status warning">In attesa</span>}</div>) : <Empty>Nessuna richiesta in attesa.</Empty>}</div>
       <div className="panel"><div className="panel-title"><div><p className="eyebrow">TRASFERIMENTI</p><h2>Consigliati</h2></div>{suggestedTransfers.length > 0 && <span className="count-pill">{suggestedTransfers.length}</span>}</div>{suggestedTransfers.length ? suggestedTransfers.slice(0, 8).map((r) => <div className="document-row" key={`${r.product.id}-${r.store}`}><span><strong>{r.product.brand ? `${r.product.brand} · ` : ""}{r.product.name}</strong><small>{r.product.color} · {r.product.size}</small></span><span className="transfer-tip"><MaterialIcon>swap_horiz</MaterialIcon>{r.transferAmount} da {r.otherStore}</span></div>) : <Empty>Nessun trasferimento consigliato.</Empty>}</div>
