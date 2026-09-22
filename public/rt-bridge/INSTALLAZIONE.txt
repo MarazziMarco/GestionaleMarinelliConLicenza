@@ -4,7 +4,7 @@ Il collegamento viene installato una sola volta, parte automaticamente all'acces
 
 INSTALLAZIONE RAPIDA
 1. Nel gestionale aprire Amministrazione > Registratori RT e generare la chiave del negozio.
-2. Scaricare il pacchetto corretto, estrarre tutto lo ZIP e fare doppio clic su Installa-Viterbo.cmd oppure Installa-Gran-Sasso.cmd.
+2. Viterbo: estrarre dallo ZIP l'unico file Marinelli-RT-Viterbo.cmd e fare doppio clic. Gran Sasso: estrarre il pacchetto e fare doppio clic su Installa-Gran-Sasso.cmd.
 3. Confermare la richiesta di Windows e incollare la chiave quando viene chiesta. L'installazione verifica subito che appartenga al negozio corretto e abilita automaticamente il ponte.
 4. Tornare nel gestionale e attendere lo stato "Collegato". Se la chiave è errata, l'installazione si interrompe senza avviare il ponte.
 5. Fare una stampa in modalità formazione insieme al tecnico fiscale. Se il collaudo non riesce, disabilitare il collegamento fino alla correzione.
@@ -32,7 +32,8 @@ TEST VELOCE VITERBO
 SICUREZZA E FUNZIONAMENTO AUTOMATICO
 - Non inviare mai la chiave del ponte per e-mail o chat. Se viene esposta, rigenerarla dal gestionale.
 - La chiave del ponte resta nel file locale protetto e non viene mai consegnata al browser. Il ticket monouso non contiene dati fiscali ed e valido soltanto per il negozio autenticato.
-- L'installazione crea l'attivita Windows "Marinelli RT Bridge" con avvio nascosto all'accesso dell'utente cassa e riavvio automatico in caso di arresto.
+- A Viterbo il file unico crea l'attivita Windows "Marinelli RT Bridge - Viterbo": parte nascosta all'accensione del PC, anche prima dell'accesso dell'utente, e si riavvia automaticamente in caso di arresto.
+- Se la chiave Viterbo viene rigenerata dal gestionale sul PC cassa, il ponte gia attivo la riceve e la salva automaticamente. Non occorre eseguire un programma separato per aggiornarla.
 - Non avviare due ponti per lo stesso negozio.
 - In caso di errore la richiesta non viene ristampata automaticamente: verificare prima il registratore, poi usare "Rimetti in coda" dal gestionale.
 - Il registro per il tecnico si trova in C:\ProgramData\MarinelliRTBridge\NOME-NEGOZIO\bridge.log.

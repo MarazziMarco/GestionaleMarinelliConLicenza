@@ -12,6 +12,7 @@
  *   - `INSERT OR IGNORE`        -> `INSERT ... ON CONFLICT DO NOTHING`
  *   - `INSERT OR REPLACE`       -> `INSERT ... ON CONFLICT (<1a col>) DO UPDATE`
  *   - `UPDATE OR IGNORE`        -> `UPDATE`
+ *   - `json_extract(x,'$.key')` -> `(x::jsonb ->> 'key')`
  *   - `.run()` su INSERT        -> aggiunge `RETURNING id` per `meta.last_row_id`
  *
  * Cosi' `lib/runtime-db.ts` e le api route continuano a funzionare invariate.
@@ -108,21 +109,30 @@ export function translateSql(input: string): { text: string; conflictInsert: boo
   let text = input;
   let conflictInsert = false;
 
-  // 0) GROUP_CONCAT (SQLite) -> string_agg (Postgres)
+  // 0) JSON_EXTRACT di SQLite -> estrazione testuale JSONB di Postgres.
+  // I payload dell'app usano solo proprieta' semplici di primo livello. La
+  // conversione resta volutamente limitata a quel formato, cosi' un eventuale
+  // percorso JSON piu' complesso non viene tradotto in modo ambiguo.
+  text = text.replace(
+    /json_extract\(\s*([A-Za-z_][A-Za-z0-9_.]*)\s*,\s*'\$\.([A-Za-z_][A-Za-z0-9_]*)'\s*\)/gi,
+    (_whole, expression: string, key: string) => `(${expression}::jsonb ->> '${key}')`,
+  );
+
+  // 1) GROUP_CONCAT (SQLite) -> string_agg (Postgres)
   text = text.replace(
     /GROUP_CONCAT\(\s*(DISTINCT\s+)?([^,()]+?)(?:\s*,\s*([^()]+?))?\s*\)/gi,
     (_whole, distinct: string | undefined, expr: string, sep: string | undefined) =>
       `string_agg(${distinct ? "DISTINCT " : ""}${expr.trim()}, ${sep ? sep.trim() : "','"})`,
   );
 
-  // 1) alias camelCase -> quotati (salta i cast ALLCAPS come `AS INTEGER`)
+  // 2) alias camelCase -> quotati (salta i cast ALLCAPS come `AS INTEGER`)
   text = text.replace(/\bAS\s+([A-Za-z_][A-Za-z0-9_]*)/g, (whole, alias: string) => {
     const hasUpper = /[A-Z]/.test(alias);
     const hasLower = /[a-z]/.test(alias);
     return hasUpper && hasLower ? `AS "${alias}"` : whole;
   });
 
-  // 2) INSERT OR REPLACE INTO t (c1, c2, ...) -> upsert su prima colonna
+  // 3) INSERT OR REPLACE INTO t (c1, c2, ...) -> upsert su prima colonna
   text = text.replace(
     /INSERT\s+OR\s+REPLACE\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)/i,
     (_whole, table: string, cols: string) => {
@@ -141,7 +151,7 @@ export function translateSql(input: string): { text: string; conflictInsert: boo
     },
   );
 
-  // 3) INSERT OR IGNORE -> ON CONFLICT DO NOTHING
+  // 4) INSERT OR IGNORE -> ON CONFLICT DO NOTHING
   if (/INSERT\s+OR\s+IGNORE/i.test(text)) {
     text = text.replace(/INSERT\s+OR\s+IGNORE\s+INTO/i, "INSERT INTO");
     text = `${text} ON CONFLICT DO NOTHING`;
@@ -155,7 +165,7 @@ export function translateSql(input: string): { text: string; conflictInsert: boo
     text = `${text} ${upsertMatch[1]}`;
   }
 
-  // 4) UPDATE OR IGNORE -> UPDATE
+  // 5) UPDATE OR IGNORE -> UPDATE
   text = text.replace(/UPDATE\s+OR\s+IGNORE/i, "UPDATE");
 
   return { text, conflictInsert };

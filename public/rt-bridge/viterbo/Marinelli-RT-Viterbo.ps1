@@ -37,6 +37,7 @@ $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 $script:Negozio = "Viterbo"
+$script:ApiBaseUrlUfficiale = "https://gestionale-stefano-marinelli.vercel.app"
 $script:CartellaInstallazione = Join-Path $env:ProgramData "MarinelliRTBridge\Viterbo"
 $script:NomeAttivita = "Marinelli RT Bridge - Viterbo"
 $script:NomeFile = "Marinelli-RT-Viterbo.ps1"
@@ -45,7 +46,7 @@ $script:FormaChiave = '^msrt_[A-Za-z0-9_-]{20,}$'
 # Valori di partenza, gli stessi di config-viterbo.example.json.
 # Durante l'installazione finiscono in config.json insieme alla chiave.
 $script:ConfigurazioneDiPartenza = [ordered]@{
-  ApiBaseUrl                       = "https://gestionale-stefano-marinelli.vercel.app"
+  ApiBaseUrl                       = $script:ApiBaseUrlUfficiale
   Store                            = "Viterbo"
   DeviceToken                      = ""
   Adapter                          = "rch_standard_tcp"
@@ -188,6 +189,10 @@ function Install-PonteViterbo {
   if (Test-Path -LiteralPath $ConfigPath) {
     try {
       $configurazione = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+      if ([string]$configurazione.ApiBaseUrl -ne $script:ApiBaseUrlUfficiale) {
+        Write-Host "Aggiorno indirizzo gestionale: $script:ApiBaseUrlUfficiale" -ForegroundColor Cyan
+        $configurazione.ApiBaseUrl = $script:ApiBaseUrlUfficiale
+      }
       Write-Host "Trovata una configurazione gia' presente: $ConfigPath" -ForegroundColor Cyan
       Write-Host "Controllo la chiave gia' installata..." -ForegroundColor Gray
       $problemaAttuale = Test-ChiaveSulGestionale -BaseUrl $configurazione.ApiBaseUrl -Store $configurazione.Store -Token $configurazione.DeviceToken
