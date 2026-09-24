@@ -1,0 +1,34 @@
+# Copiare questo file in .github/workflows/backup.yml (da GitHub → Add file).
+# Richiede il secret BACKUP_DATABASE_URL (connection string diretta Supabase, porta 5432).
+name: Backup DB
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # ogni giorno alle 02:00 UTC (~04:00 in Italia)
+  workflow_dispatch: {} # avvio manuale dalla tab Actions
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Installa pg_dump 16
+        run: |
+          set -e
+          echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+      - name: Dump del database
+        run: |
+          set -e
+          ts=$(date +%Y%m%d-%H%M)
+          pg_dump --no-owner --no-privileges "$DATABASE_URL" | gzip > "backup-$ts.sql.gz"
+          ls -lh backup-*.sql.gz
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      - name: Salva come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: backup-*.sql.gz
+          retention-days: 30
