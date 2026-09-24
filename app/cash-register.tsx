@@ -548,7 +548,7 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
   const [completing, setCompleting] = useState(false);
   const [cardAmount, setCardAmount] = useState("");
   const [fiscalDocumentType, setFiscalDocumentType] = useState<"receipt" | "invoice">("receipt");
-  const [lastSale, setLastSale] = useState<{ id: number; receiptNo: string; automaticFiscalDocument: string | null; invoiceDocument: { id: number; number: string } | null; fiscalJob: { id: number; status: string } | null; replacementGift: { id: number; code: string; value: number; beneficiary: string } | null } | null>(null);
+  const [lastSale, setLastSale] = useState<{ id: number; receiptNo: string; automaticFiscalDocument: string | null; invoiceDocument: { id: number; number: string } | null; fiscalJob: { id: number; status: string } | null; replacementGift: { id: number; code: string; value: number; beneficiary: string; replacesGift?: boolean } | null } | null>(null);
 
   const subtotal = useMemo(() => Math.round(cart.reduce((sum, item) => sum + lineTotal(item), 0) * 100) / 100, [cart]);
   const cartDiscountPct = !discountOpen ? 0 : cartDiscountMode === "eur"
@@ -714,7 +714,7 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
       setSaleDone({ id: result.saleId, receiptNo: result.receiptNo, total, cash: payment === "cash" && !hasReturn ? (Number(cashReceived) || 0) : null, change: changeDue });
       const giftSummary = cart.filter((item) => item.itemType === "gift_redemption").map((item) => Number(item.metadata.residual) > 0.005 ? `Buono ${String(item.metadata.code)}: restano ${money(Number(item.metadata.residual))} spendibili.` : `Buono ${String(item.metadata.code)} esaurito.`).join(" ");
       setCart([]); setCartDiscount(""); setTotalOverride(""); setCashAmount(""); setCashReceived(""); setCardAmount(""); setCustomer(null); setPayment("cash"); setFiscalDocumentType("receipt");
-      setNotice(hasReturn ? `Cambio ${result.receiptNo} registrato. ${result.replacementGift ? `Buono precedente stornato: nuovo buono da ${money(result.replacementGift.value)} intestato a ${result.replacementGift.beneficiary}.` : total > 0 ? `Differenza incassata: ${money(total)}.` : total < 0 ? `Rimborso registrato: ${money(Math.abs(total))}.` : "Cambio alla pari."} ${fiscalMessage}` : payment === "bank" ? `Vendita ${result.receiptNo} registrata con bonifico. ${result.invoiceDocument ? `Fattura ${result.invoiceDocument.number} generata automaticamente.` : fiscalMessage}` : `Vendita ${result.receiptNo} registrata. ${giftSummary ? giftSummary + " " : ""}${fiscalMessage}`);
+      setNotice(hasReturn ? `Cambio ${result.receiptNo} registrato. ${result.replacementGift ? `${result.replacementGift.replacesGift ? "Buono precedente stornato: nuovo buono" : "Creato un buono"} da ${money(result.replacementGift.value)} (codice ${result.replacementGift.code}) intestato a ${result.replacementGift.beneficiary}. Stampalo con \"PDF nuovo buono\".` : total > 0 ? `Differenza incassata: ${money(total)}.` : total < 0 ? `Rimborso registrato: ${money(Math.abs(total))}.` : "Cambio alla pari."} ${fiscalMessage}` : payment === "bank" ? `Vendita ${result.receiptNo} registrata con bonifico. ${result.invoiceDocument ? `Fattura ${result.invoiceDocument.number} generata automaticamente.` : fiscalMessage}` : `Vendita ${result.receiptNo} registrata. ${giftSummary ? giftSummary + " " : ""}${fiscalMessage}`);
       if (fiscalError) setError(fiscalError);
       await reload();
     } catch (reason) {

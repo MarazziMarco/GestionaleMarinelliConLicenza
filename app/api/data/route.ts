@@ -1017,14 +1017,14 @@ async function createSale(user: SessionUser, body: JsonMap) {
     }
   }
 
-  let replacementGift: { id: number; code: string; value: number; beneficiary: string } | null = null;
+  let replacementGift: { id: number; code: string; value: number; beneficiary: string; replacesGift: boolean } | null = null;
   if (replacementGiftPlan) {
     const createdGift = await database().prepare(`INSERT INTO gift_cards (code, beneficiary, initial_value, balance, expires_at, store, issued_sale_id, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)`)
       .bind(replacementGiftPlan.code, replacementGiftPlan.beneficiary, replacementGiftPlan.value, replacementGiftPlan.value, replacementGiftPlan.expiresAt, store, saleId, createdAt).run();
     const createdGiftId = createdGift.meta?.last_row_id;
     if (!createdGiftId) return json({ error: "Il reso è stato registrato ma non è stato possibile generare il buono residuo. Contatta l'amministratore." }, 500);
     if (replacementGiftPlan.originalGiftId) await database().prepare(`UPDATE gift_cards SET balance = 0, status = 'reversed' WHERE id = ?`).bind(replacementGiftPlan.originalGiftId).run();
-    replacementGift = { id: Number(createdGiftId), code: replacementGiftPlan.code, value: replacementGiftPlan.value, beneficiary: replacementGiftPlan.beneficiary };
+    replacementGift = { id: Number(createdGiftId), code: replacementGiftPlan.code, value: replacementGiftPlan.value, beneficiary: replacementGiftPlan.beneficiary, replacesGift: Boolean(replacementGiftPlan.originalGiftId) };
   }
 
   if (giftAmount > 0) await database().prepare(`UPDATE gift_cards SET balance = balance - ?, status = CASE WHEN balance - ? <= 0.001 THEN 'used' ELSE 'active' END WHERE code = ?`).bind(giftAmount, giftAmount, giftCodeUsed).run();
