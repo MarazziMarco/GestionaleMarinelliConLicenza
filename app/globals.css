@@ -256,9 +256,9 @@ small { color: var(--ink-soft); }
 .payment-tabs { display: grid; grid-template-columns: repeat(2,1fr); gap: .45rem; }
 .payment-tabs button { min-height: 38px; border: 1px solid var(--overlay-border); border-radius: 10px; background: var(--overlay-bg); color: var(--overlay-ink); font-size: .75rem; font-weight: 800; }
 .payment-tabs button.active { border-color: var(--lime); background: var(--lime); color: #041016; }
-.bank-payment-box { display: grid; gap: .65rem; margin-top: .75rem; padding: .8rem; border: 1px solid var(--overlay-border); border-radius: 12px; background: var(--overlay-bg); }
+.bank-payment-box, .gift-payment-box { display: grid; gap: .65rem; margin-top: .75rem; padding: .8rem; border: 1px solid var(--overlay-border); border-radius: 12px; background: var(--overlay-bg); }
 .bank-payment-box .alert { margin: 0; }
-.bank-payment-box .muted { margin: 0; color: var(--overlay-ink); }
+.bank-payment-box .muted, .gift-payment-box .muted { margin: 0; color: var(--overlay-ink); }
 .split-fields { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin-top: .7rem; }
 .last-sale { display: grid; gap: .55rem; padding: .85rem; border-radius: 14px; background: rgba(255,255,255,.08); }
 .last-sale .text-button { color: var(--checkout-ink); }
