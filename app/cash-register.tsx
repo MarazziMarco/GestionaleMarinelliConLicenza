@@ -298,12 +298,13 @@ function percentToEuroDiscount(quantity: number, unitPrice: number, percent: num
   return Math.round(quantity * unitPrice * (percent / 100) * 100) / 100;
 }
 
-function CartRow({ item, product, onQty, onDiscountPercent, onRemove }: {
+function CartRow({ item, product, onQty, onDiscountPercent, onRemove, onInspect }: {
   item: CartItem;
   product: Product | undefined;
   onQty: (quantity: number) => void;
   onDiscountPercent: (percent: number) => void;
   onRemove: () => void;
+  onInspect?: () => void;
 }) {
   const [mode, setMode] = useState<"pct" | "eur">("pct");
   const editable = !item.locked && item.quantity > 0 && !["gift", "deposit", "repair_deposit", "return", "reservation_balance", "reservation_deposit", "reservation_credit"].includes(item.itemType);
@@ -315,7 +316,7 @@ function CartRow({ item, product, onQty, onDiscountPercent, onRemove }: {
   return <div className={`cart-line ${item.itemType === "return" ? "return-row" : ""}`}>
     <ProductThumb photoKey={product?.photoKey} name={item.description} className="cart-line-thumb" />
     <div className="cart-line-main">
-      <strong className="cart-line-name">{item.description}</strong>
+      {onInspect ? <button type="button" className="cart-line-name cart-line-inspect" onClick={onInspect} title="Vedi dettagli prodotto">{item.description}</button> : <strong className="cart-line-name">{item.description}</strong>}
       <small className="cart-line-sub">{money(item.unitPrice)} cad.{item.itemType !== "product" ? ` · ${item.itemType.replaceAll("_", " ")}` : ""}</small>
     </div>
     {editable ? <>
@@ -604,7 +605,7 @@ function OperationsMenu({ store, onPick }: { store: Store; onPick: (modal: strin
   </div>;
 }
 
-export default function CashRegister({ data, reload, queue, onQueueConsumed, cart, setCart, pendingAction, onPendingConsumed }: { data: CashData; reload: () => Promise<void>; queue?: number[]; onQueueConsumed?: () => void; cart: CartItem[]; setCart: React.Dispatch<React.SetStateAction<CartItem[]>>; pendingAction?: PendingCashAction | null; onPendingConsumed?: () => void }) {
+export default function CashRegister({ data, reload, queue, onQueueConsumed, cart, setCart, pendingAction, onPendingConsumed, onInspectProduct }: { data: CashData; reload: () => Promise<void>; queue?: number[]; onQueueConsumed?: () => void; cart: CartItem[]; setCart: React.Dispatch<React.SetStateAction<CartItem[]>>; pendingAction?: PendingCashAction | null; onPendingConsumed?: () => void; onInspectProduct?: (productId: number) => void }) {
   const [adminStore, setAdminStore] = useState<Store>("Viterbo");
   const store = data.user.store ?? adminStore;
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -826,7 +827,8 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
     <CartRow item={item} product={product}
       onQty={(quantity) => updateItem(item.key, { quantity })}
       onDiscountPercent={(percent) => updateItem(item.key, { discountPercent: percent })}
-      onRemove={() => removeItem(item.key)} />
+      onRemove={() => removeItem(item.key)}
+      onInspect={item.productId != null && onInspectProduct ? () => onInspectProduct(item.productId!) : undefined} />
     {details.length > 0 && <div className="cart-subitems"><div className="cart-subitems-head"><span>Dettaglio prodotti</span><span>Qtà</span><span>Costo</span></div>{details.map((detail, index) => <div className="cart-subitem" key={`${item.key}-detail-${index}`}><span>{detail.description}</span><span>{detail.quantity}</span><b>{money(detail.quantity * detail.unitPrice * (1 - detail.discountPercent / 100))}</b></div>)}<div className="cart-subitems-total"><span>Totale operazione</span><b>{money(Number(item.metadata.totalPrice) || details.reduce((sum, detail) => sum + detail.quantity * detail.unitPrice * (1 - detail.discountPercent / 100), 0))}</b></div></div>}
   </Fragment>;
 })}</div>}</div>
