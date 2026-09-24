@@ -1078,3 +1078,28 @@ button.cart-line-inspect:hover { text-decoration: underline; }
 /* Tema chiaro: chip sede leggibili */
 [data-theme="light"] .store-chip.viterbo { background: #e2f0f7; color: #1f6f8b; }
 [data-theme="light"] .store-chip.gran-sasso { background: #fdecd9; color: #b45309; }
+
+/* --- Responsive: niente sovrapposizioni su telefono, tablet e schermi medi --- */
+/* .stack e' una griglia: senza colonna esplicita si allarga al contenuto piu' largo
+   (es. una select con opzioni lunghe) e finisce sotto i pannelli accanto. */
+.stack { grid-template-columns: minmax(0, 1fr); }
+.field select { min-width: 0; max-width: 100%; }
+.document-row strong, .document-row small { overflow-wrap: anywhere; }
+/* La cassa si adatta alla larghezza della propria colonna, non a quella dello schermo:
+   con la barra laterale aperta su tablet orizzontale la colonna carrello e' stretta. */
+.cash-main { container-type: inline-size; }
+@container (max-width: 620px) {
+  .scanner-panel { grid-template-columns: minmax(0, 1fr); }
+  .cart-line { flex-wrap: wrap; }
+  .cart-line-main { flex: 1 1 calc(100% - 60px); }
+  .cart-line-total { min-width: auto; margin-left: auto; }
+}
+@media (max-width: 1150px) and (min-width: 801px) {
+  .cash-grid { grid-template-columns: minmax(0, 1fr) 320px; }
+}
+@media (max-width: 800px) {
+  /* Il pulsante menu flottante non deve coprire l'ultimo contenuto della pagina. */
+  .app-main { padding-bottom: 5.5rem; }
+  /* Tabelle: meglio scorrere di lato che schiacciare le colonne una lettera per riga. */
+  .table-wrap > table { min-width: 680px; }
+}
