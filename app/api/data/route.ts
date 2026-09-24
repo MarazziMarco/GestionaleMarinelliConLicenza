@@ -798,6 +798,14 @@ async function createSale(user: SessionUser, body: JsonMap) {
   const items = normalizeItems(body.items);
   if (!items.length) return json({ error: "Il carrello è vuoto." }, 400);
   if (items.filter((item) => item.itemType === "return").length > 1) return json({ error: "Registra un solo reso per scontrino." }, 409);
+  // Idempotenza: retry/doppio invio con lo stesso client_ref -> restituisco la vendita
+  // già registrata senza ricrearla (niente doppio scontrino né doppio scarico). Va fatto
+  // prima di ogni controllo/effetto (es. giacenza), così un reinvio non viene bloccato.
+  const clientRef = stringValue(body.clientRef);
+  if (clientRef) {
+    const existing = await database().prepare(`SELECT id, receipt_no AS receiptNo FROM sales WHERE client_ref = ?`).bind(clientRef).first<{ id: number; receiptNo: string }>();
+    if (existing) return json({ ok: true, saleId: existing.id, receiptNo: existing.receiptNo, duplicate: true });
+  }
 
   const subtotal = Math.round(items.reduce((sum, item) => sum + item.quantity * item.unitPrice * (1 - item.discountPercent / 100), 0) * 100) / 100;
   const total = Math.round(numberValue(body.total, subtotal) * 100) / 100;
@@ -934,8 +942,8 @@ async function createSale(user: SessionUser, body: JsonMap) {
   const type = items.some((item) => item.itemType === "return") ? "exchange" : "sale";
   const createdAt = new Date().toISOString();
   const fiscalStatus = fiscalDocumentType === "invoice" ? "invoiced" : "pending";
-  const sale = await database().prepare(`INSERT INTO sales (receipt_no, store, customer_id, type, subtotal, adjustment, total, cash_amount, card_amount, bank_amount, gift_amount, gift_code_used, fiscal_status, fiscal_document_type, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .bind(receiptNo, store, customerId, type, subtotal, total - subtotal, total, cash, card, bank, giftAmount, giftCodeUsed || null, fiscalStatus, fiscalDocumentType, user.id, createdAt).run();
+  const sale = await database().prepare(`INSERT INTO sales (receipt_no, store, customer_id, type, subtotal, adjustment, total, cash_amount, card_amount, bank_amount, gift_amount, gift_code_used, fiscal_status, fiscal_document_type, created_by, created_at, client_ref) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(receiptNo, store, customerId, type, subtotal, total - subtotal, total, cash, card, bank, giftAmount, giftCodeUsed || null, fiscalStatus, fiscalDocumentType, user.id, createdAt, clientRef || null).run();
   const saleId = sale.meta?.last_row_id;
   if (!saleId) return json({ error: "Vendita non registrata." }, 500);
 

@@ -186,6 +186,8 @@ const columnAdditions = [
   `ALTER TABLE reservations ADD COLUMN IF NOT EXISTS expected_delivery TEXT`,
   `ALTER TABLE reservations ADD COLUMN IF NOT EXISTS deposit_paid INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE reservations ADD COLUMN IF NOT EXISTS note TEXT`,
+  // Riferimento univoco lato client: evita scontrini doppi su retry/doppio invio.
+  `ALTER TABLE sales ADD COLUMN IF NOT EXISTS client_ref TEXT`,
 ];
 const columnRelaxations = [
   `ALTER TABLE transfer_items ALTER COLUMN product_id DROP NOT NULL`,
@@ -209,6 +211,8 @@ async function runMigrations() {
     db.prepare(`INSERT OR IGNORE INTO app_settings (key, value) VALUES ('firebase_auth_cutover_v1', ?)` ).bind(new Date().toISOString()),
   ]);
   await applyColumnMigrations(db);
+  // Indice unico parziale: una vendita per client_ref (i vecchi record NULL restano validi).
+  try { await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS sales_client_ref_uidx ON sales (client_ref) WHERE client_ref IS NOT NULL`).run(); } catch { /* indice già presente o non supportato */ }
   // Allinea le stesse colonne anche allo schema sandbox (account test), così non
   // resta indietro quando si aggiungono campi. Solo su Postgres reale (non pglite).
   if (!isDevDb()) {
