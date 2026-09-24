@@ -835,7 +835,7 @@ async function createSale(user: SessionUser, body: JsonMap) {
     if (original.itemType === "service") {
       if (original.category !== "Varie" && !original.description.startsWith("Varie ·")) return json({ error: "Questa prestazione non è registrata come vendita Varie restituibile." }, 409);
     }
-    const returned = await database().prepare(`SELECT COALESCE(SUM(ABS(quantity)), 0) AS quantity FROM sale_items WHERE item_type = 'return' AND (CAST(json_extract(metadata, '$.originalSaleItemId') AS INTEGER) = ? OR (json_extract(metadata, '$.originalSaleItemId') IS NULL AND ? IS NOT NULL AND product_id = ? AND json_extract(metadata, '$.originalReceipt') = ?))`).bind(originalSaleItemId, request.productId, request.productId, original.receiptNo).first<{ quantity: number }>();
+    const returned = await database().prepare(`SELECT COALESCE(SUM(ABS(quantity)), 0) AS quantity FROM sale_items WHERE item_type = 'return' AND (CAST(json_extract(metadata, '$.originalSaleItemId') AS INTEGER) = ? OR (json_extract(metadata, '$.originalSaleItemId') IS NULL AND CAST(? AS INTEGER) IS NOT NULL AND product_id = ? AND json_extract(metadata, '$.originalReceipt') = ?))`).bind(originalSaleItemId, request.productId, request.productId, original.receiptNo).first<{ quantity: number }>();
     const remaining = Math.max(0, Math.abs(Number(original.quantity)) - Math.abs(Number(returned?.quantity) || 0));
     if (request.quantity > remaining + 0.001) return json({ error: `Quantità non disponibile per il reso: restano ${remaining} pezzi sullo scontrino ${original.receiptNo}.` }, 409);
     const adjustmentFactor = Math.abs(Number(original.subtotal)) > 0.001 ? Number(original.total) / Number(original.subtotal) : 1;
