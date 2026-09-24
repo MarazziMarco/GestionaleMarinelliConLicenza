@@ -203,6 +203,15 @@ async function applyColumnMigrations(db: D1Database, tolerant = false) {
   for (const statement of columnRelaxations) { try { await db.prepare(statement).run(); } catch { /* già nullable */ } }
 }
 
+const enableRowLevelSecurity = `DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT schemaname, tablename FROM pg_tables
+           WHERE schemaname IN ('public', 'sandbox') AND NOT rowsecurity LOOP
+    EXECUTE format('ALTER TABLE %I.%I ENABLE ROW LEVEL SECURITY', r.schemaname, r.tablename);
+  END LOOP;
+END $$`;
+
 async function runMigrations() {
   const db = database();
   await db.batch(schemaStatements.map((statement) => db.prepare(statement)));
@@ -218,6 +227,10 @@ async function runMigrations() {
   if (!isDevDb()) {
     try { await dbScope.run({ sandbox: true }, () => applyColumnMigrations(database(), true)); }
     catch { /* schema sandbox assente o non allineabile: si prosegue */ }
+    // RLS su ogni tabella (anche quelle nuove): la chiave anon e' pubblica e
+    // senza RLS l'API REST di Supabase esporrebbe i dati. Vedi 0005_enable_rls.sql.
+    try { await db.prepare(enableRowLevelSecurity).run(); }
+    catch (error) { console.error("[ensureDatabase] RLS non applicata:", error); }
   }
   await db.prepare(`UPDATE users SET username = 'admin', display_name = 'Amministratore', role = 'admin', store = NULL, must_change_password = 0 WHERE username = 'amministratore' AND NOT EXISTS (SELECT 1 FROM users WHERE username = 'admin')`).run();
   await db.prepare(`UPDATE users SET display_name = 'Cassa Viterbo', role = 'viterbo', store = 'Viterbo', must_change_password = 0 WHERE username = 'viterbo'`).run();
