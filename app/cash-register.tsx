@@ -61,84 +61,8 @@ const todayPlusYear = () => new Date(Date.now() + 365 * 86400000).toISOString().
 const fiscalJobLabel: Record<string, string> = { awaiting_setup: "Configurazione RT da completare", queued: "Scontrino in coda", processing: "Stampa RT in corso", printed: "Scontrino RT stampato", error: "Errore stampa RT" };
 let localFiscalPrintActive = false;
 
-type LocalFiscalPayload = {
-  documentType?: string;
-  total: number;
-  adjustment?: number;
-  lines: Array<{ description: string; quantity: number; lineTotal: number | string; itemType?: string; metadata?: Record<string, unknown> }>;
-  payments: Array<{ method: string; amount: number }>;
-};
-
-function eurosToRchCents(value: unknown) {
-  const normalized = typeof value === "string" ? value.trim().replace(",", ".") : value;
-  const euros = Number(normalized);
-  if (!Number.isFinite(euros)) throw new Error("Importo non valido per la cassa RCH.");
-  const cents = Math.round(euros * 100);
-  if (!Number.isSafeInteger(cents)) throw new Error("Importo in centesimi non valido per la cassa RCH.");
-  return cents;
-}
-
-function buildRchPaymentCommands(payload: LocalFiscalPayload) {
-  const paymentIndexes: Record<string, number> = { cash: 1, card: 4, bank: 8, gift: 10 };
-  const paymentOrder = ["gift", "cash", "bank", "card"];
-  const amounts = new Map<string, number>();
-
-  for (const payment of payload.payments ?? []) {
-    const amount = eurosToRchCents(payment.amount);
-    if (amount <= 0) continue;
-    if (!(payment.method in paymentIndexes)) throw new Error(`Pagamento RCH non configurato: ${payment.method}.`);
-    amounts.set(payment.method, (amounts.get(payment.method) ?? 0) + amount);
-  }
-
-  const expectedTotal = eurosToRchCents(payload.total);
-  const paymentTotal = [...amounts.values()].reduce((sum, amount) => sum + amount, 0);
-  if (paymentTotal !== expectedTotal) throw new Error("La somma dei pagamenti RCH non coincide con il totale dello scontrino.");
-
-  const activeMethods = paymentOrder.filter((method) => (amounts.get(method) ?? 0) > 0);
-  if (!activeMethods.length) throw new Error("Lo scontrino RCH non contiene un pagamento valido.");
-  if (activeMethods.length === 1) return [`=T${paymentIndexes[activeMethods[0]]}`];
-
-  return activeMethods.map((method) => `=T${paymentIndexes[method]}/$${amounts.get(method)}`);
-}
-
-// Deve produrre esattamente lo stesso testo di ConvertTo-RchDescription nel ponte
-// Windows (MarinelliRTBridge.ps1): il ponte ricalcola i comandi attesi e rifiuta
-// lo scontrino se non coincidono carattere per carattere con quelli inviati qui.
-function cleanRchDescription(value: string, maximum = 20) {
-  const base = String(value ?? "");
-  if (!base.trim()) return "ARTICOLO";
-  const stripped = base.normalize("NFD").replace(/\p{Diacritic}/gu, "").normalize("NFC");
-  let clean = stripped.replace(/[^\x20-\x7E]/g, " ");
-  clean = clean.replace(/[/()$*[\]^_@]/g, " ");
-  clean = clean.replace(/\s+/g, " ").trim();
-  if (!clean) clean = "ARTICOLO";
-  if (clean.length > maximum) clean = clean.substring(0, maximum).trim();
-  return clean;
-}
-
-function buildRchReceiptCommands(payload: LocalFiscalPayload | null | undefined) {
-  if (!payload || !Array.isArray(payload.lines)) return "=C1\r\n=S\r\n=T1\r\n";
-  const lines = payload.lines.filter((line) => Number(line.quantity) > 0 && line.itemType !== "return");
-  if (!lines.length) return "=C1\r\n=S\r\n=T1\r\n";
-
-  const commands: string[] = [];
-  commands.push("=C1");
-
-  lines.forEach((line) => {
-    const rawEuros = line.lineTotal;
-    const euros = Number(typeof rawEuros === "string" ? rawEuros.trim().replace(",", ".") : rawEuros) || 0;
-    const amountsCent = Math.round(euros * 100);
-
-    const descPulita = cleanRchDescription(line.description || "ARTICOLO", 20);
-
-    commands.push("=R22/$" + amountsCent + "/a/" + descPulita);
-  });
-
-  commands.push("=S");
-  commands.push(...buildRchPaymentCommands(payload));
-
-  return commands.join("\r\n") + "\r\n";
-}
+// I comandi RCH li costruisce il ponte Windows dal payload fiscale del server
+// (Invoke-RchStandardTcp): il gestionale manda solo il ticket.
 
 // --- UNIVERSAL LOCAL BRIDGE CONNECTOR ---
 export function localFiscalBridgeRequest(message: Record<string, unknown> | string, responseTimeout = 200000) {
@@ -322,7 +246,7 @@ function CartRow({ item, product, onQty, onDiscountPercent, onRemove, onInspect 
     {editable ? <>
       <div className="qty-stepper"><button type="button" onClick={() => onQty(Math.max(1, item.quantity - 1))} aria-label="Diminuisci">−</button><input type="number" min="1" step="1" value={item.quantity} onChange={(e) => onQty(Math.max(0, Number(e.target.value) || 0))} aria-label="Quantità" /><button type="button" onClick={() => onQty(item.quantity + 1)} aria-label="Aumenta">+</button></div>
       <div className="disc-field"><input type="number" min="0" step="0.01" value={discountValue} onChange={(e) => applyDiscount(e.target.value)} aria-label="Sconto" /><button type="button" className="disc-toggle" onClick={() => setMode((m) => m === "pct" ? "eur" : "pct")} aria-label="Cambia unità sconto">{mode === "pct" ? "%" : "€"}</button></div>
-    </> : <><span className="cart-line-locked">×{item.quantity}</span><span /></>}
+    </> : <><span className="cart-line-locked">{item.itemType === "return" ? `Reso ×${Math.abs(item.quantity)}` : `×${item.quantity}`}</span><span /></>}
     <b className="cart-line-total">{money(lineTotal(item))}</b>
     <button type="button" className="cart-line-remove" onClick={onRemove} aria-label="Rimuovi"><MaterialIcon>delete</MaterialIcon></button>
   </div>;
@@ -751,7 +675,6 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
             action: "printFiscalReceipt",
             store,
             ticket: result.localFiscalTicket,
-            ...(store === "Viterbo" ? { rchCommands: buildRchReceiptCommands(result.localFiscalPayload as LocalFiscalPayload) } : {}),
           });
           if (store === "Viterbo") await confirmPhysicalRchPrint(result.fiscalJob.id, bridgeResult);
           result.fiscalJob.status = "printed";
@@ -790,7 +713,6 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
         action: "printFiscalReceipt",
         store: retryStore,
         ticket: result.localFiscalTicket,
-        ...(retryStore === "Viterbo" ? { rchCommands: buildRchReceiptCommands(result.localFiscalPayload as LocalFiscalPayload) } : {}),
       });
       if (retryStore === "Viterbo") await confirmPhysicalRchPrint(lastFiscalJob.id, bridgeResult);
       setNotice(typeof bridgeResult.warning === "string" ? bridgeResult.warning : "Scontrino RT stampato.");

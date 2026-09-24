@@ -3,6 +3,7 @@ import { getBucket } from "../../../lib/storage";
 import { withDbScope } from "../../../lib/db";
 import { createAuthUser, setAuthUserPassword, deleteAuthUser } from "../../../lib/supabase-server";
 import { computeNextDocumentNumber } from "../../../lib/pricing";
+import { buildFiscalLines } from "../../../lib/fiscal-lines";
 
 type JsonMap = Record<string, unknown>;
 type CartItem = {
@@ -798,6 +799,9 @@ async function createSale(user: SessionUser, body: JsonMap) {
   const items = normalizeItems(body.items);
   if (!items.length) return json({ error: "Il carrello è vuoto." }, 400);
   if (items.filter((item) => item.itemType === "return").length > 1) return json({ error: "Registra un solo reso per scontrino." }, 409);
+  // Sul documento RT con reso il ponte non applica sconti sul totale: il buono
+  // non ci starebbe e i pagamenti non tornerebbero.
+  if (items.some((item) => item.itemType === "return") && items.some((item) => item.itemType === "gift_redemption")) return json({ error: "Registra prima il reso, poi usa il buono in una vendita separata." }, 409);
   // Idempotenza: retry/doppio invio con lo stesso client_ref -> restituisco la vendita
   // già registrata senza ricrearla (niente doppio scontrino né doppio scarico). Va fatto
   // prima di ogni controllo/effetto (es. giacenza), così un reinvio non viene bloccato.
@@ -1061,7 +1065,8 @@ async function createSale(user: SessionUser, body: JsonMap) {
   let localFiscalTicket: string | null = null;
   let fiscalPayload: JsonMap | null = null;
   let fiscalDevice: { id: number; vendor: string; model: string; connector: string; enabled: number; tokenHash: string | null } | null = null;
-  if (fiscalDocumentType === "receipt") {
+  const fiscal = buildFiscalLines(items, total);
+  if (fiscalDocumentType === "receipt" && fiscal.printable) {
     fiscalDevice = await database().prepare(`SELECT id, vendor, model, connector, enabled, token_hash AS tokenHash FROM fiscal_devices WHERE store = ?`).bind(store).first<{ id: number; vendor: string; model: string; connector: string; enabled: number; tokenHash: string | null }>();
     const paymentLines = [
       cash ? { method: "cash", description: "CONTANTI", amount: cash, epsonMode: 0 } : null,
@@ -1079,17 +1084,9 @@ async function createSale(user: SessionUser, body: JsonMap) {
       requiresOriginalFiscalReference: type === "exchange",
       originalFiscalReference,
       printer: fiscalDevice ? { vendor: fiscalDevice.vendor, model: fiscalDevice.model, connector: fiscalDevice.connector } : null,
-      lines: items.map((item) => ({
-        description: item.description,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discountPercent: item.discountPercent,
-        lineTotal: Math.round(item.quantity * item.unitPrice * (1 - item.discountPercent / 100) * 100) / 100,
-        itemType: item.itemType,
-        metadata: item.metadata,
-      })),
-      subtotal,
-      adjustment: Math.round((total - subtotal) * 100) / 100,
+      lines: fiscal.lines,
+      subtotal: fiscal.subtotal,
+      adjustment: fiscal.adjustment,
       total,
       payments: paymentLines,
     };

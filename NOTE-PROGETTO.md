@@ -54,10 +54,11 @@ Una cartella per negozio, ognuna completa e a sé stante:
 
 I due `MarinelliRTBridge.ps1` **non coincidono** e non vanno fusi: quello di
 Viterbo ha la lettura RCH riscritta e il timeout a 20 secondi, quello del Gran
-Sasso è fermo alla versione precedente. `ConvertTo-RchDescription` è però
-identica nelle due, e deve restare identica a `cleanRchDescription` in
-`app/cash-register.tsx`, carattere per carattere: il ponte ricalcola i comandi
-attesi e rifiuta lo scontrino se non coincidono.
+Sasso è fermo alla versione precedente. I comandi RCH li costruisce solo il
+ponte (`Invoke-RchStandardTcp`) dal payload fiscale del server
+(`lib/fiscal-lines.ts`): il gestionale manda al ponte solo il ticket. Il ponte non
+accetta righe a prezzo negativo, per questo il buono speso arriva come sconto sul
+totale e non come riga.
 
 ### File unico di Viterbo
 
