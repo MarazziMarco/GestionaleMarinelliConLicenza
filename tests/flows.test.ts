@@ -92,6 +92,21 @@ describe("flusso vendita (pglite)", () => {
     expect(after.sales.find((s) => s.receiptNo === body.receiptNo)!.total).toBeCloseTo(-product.price, 2);
   });
 
+  it("stesso client_ref: niente doppio scontrino né doppio scarico", async () => {
+    const before = await bootstrap();
+    const product = before.products.find((p) => p.viterboQty - p.viterboReserved > 0)!;
+    const baseQty = product.viterboQty;
+    const ref = `ref-${Math.random().toString(16).slice(2)}`;
+    const payload = { action: "createSale", store: "Viterbo", total: product.price, cashAmount: product.price, clientRef: ref, items: [{ productId: product.id, description: product.name, quantity: 1, unitPrice: product.price, discountPercent: 0, itemType: "product", metadata: {} }] };
+    const first = await (await api.post(payload)).json();
+    const second = await (await api.post(payload)).json();
+    expect(first.receiptNo).toBeTruthy();
+    expect(second.receiptNo).toBe(first.receiptNo); // stessa vendita
+    expect(second.duplicate).toBe(true);
+    const after = await bootstrap();
+    expect(after.products.find((p) => p.id === product.id)!.viterboQty).toBe(baseQty - 1); // scalato una sola volta
+  });
+
   it("blocca un reso non collegato a una vendita reale", async () => {
     const before = await bootstrap();
     const product = before.products.find((p) => p.price > 0)!;

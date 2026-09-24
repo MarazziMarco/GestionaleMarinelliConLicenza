@@ -741,7 +741,8 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
     setCompleting(true);
     setError(""); setNotice("");
     try {
-      const result = await post("createSale", { store, customerId: customer?.id ?? null, items: cart, total, fiscalDocumentType, ...payments() });
+      const clientRef = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const result = await post("createSale", { store, customerId: customer?.id ?? null, items: cart, total, fiscalDocumentType, clientRef, ...payments() });
       let fiscalError = "";
       let fiscalMessage = result.fiscalJob?.status === "awaiting_setup" ? "Registratore RT da configurare: la richiesta resta salvata." : "";
       if (result.localFiscalTicket && result.fiscalJob?.id) {
