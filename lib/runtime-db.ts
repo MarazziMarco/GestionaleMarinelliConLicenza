@@ -218,8 +218,16 @@ BEGIN
   END LOOP;
 END $$`;
 
-async function backfillReorderEnabled(db: D1Database) {
-  const done = await db.prepare("SELECT value FROM app_settings WHERE key = 'reorder_enabled_backfill_v1'").first();
+// Il segnaposto va tenuto distinto per schema: la connessione sandbox usa
+// search_path "sandbox, public" e app_settings esiste solo in public (vedi
+// lib/db.ts), quindi il giro sandbox aggiorna sandbox.inventory ma scriverebbe
+// il segnaposto fra le impostazioni reali, impedendo per sempre alla migrazione
+// vera di partire. Con due chiavi diverse ogni schema tiene il proprio stato.
+export const REORDER_BACKFILL_KEY = "reorder_enabled_backfill_v2";
+export const REORDER_BACKFILL_KEY_SANDBOX = "reorder_enabled_backfill_sandbox_v2";
+
+async function backfillReorderEnabled(db: D1Database, key: string) {
+  const done = await db.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first();
   if (done) return;
   await db.prepare(`UPDATE inventory SET reorder_enabled = 1 WHERE quantity > 0 OR reserved > 0
     OR EXISTS (SELECT 1 FROM sale_items si JOIN sales s ON s.id = si.sale_id
@@ -228,7 +236,7 @@ async function backfillReorderEnabled(db: D1Database) {
       AND a.entity_id = inventory.product_id AND a.store = inventory.store AND a.action IN ('load', 'stock'))
     OR EXISTS (SELECT 1 FROM transfer_items ti JOIN transfers t ON t.id = ti.transfer_id
       WHERE ti.product_id = inventory.product_id AND t.status = 'accepted' AND (t.from_store = inventory.store OR t.to_store = inventory.store))`).run();
-  await db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('reorder_enabled_backfill_v1', '1')").run();
+  await db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, '1')").bind(key).run();
 }
 async function runMigrations() {
   const db = database();
@@ -243,7 +251,7 @@ async function runMigrations() {
   // Allinea le stesse colonne anche allo schema sandbox (account test), così non
   // resta indietro quando si aggiungono campi. Solo su Postgres reale (non pglite).
   if (!isDevDb()) {
-    try { await dbScope.run({ sandbox: true }, async () => { await applyColumnMigrations(database(), true); await backfillReorderEnabled(database()); }); }
+    try { await dbScope.run({ sandbox: true }, async () => { await applyColumnMigrations(database(), true); await backfillReorderEnabled(database(), REORDER_BACKFILL_KEY_SANDBOX); }); }
     catch { /* schema sandbox assente o non allineabile: si prosegue */ }
     // RLS su ogni tabella (anche quelle nuove): la chiave anon e' pubblica e
     // senza RLS l'API REST di Supabase esporrebbe i dati. Vedi 0005_enable_rls.sql.
@@ -263,7 +271,7 @@ async function runMigrations() {
     }
     await db.prepare(`INSERT OR REPLACE INTO app_settings (key, value) VALUES ('initial_seed_completed', '1')`).run();
   }
-  await backfillReorderEnabled(db);
+  await backfillReorderEnabled(db, REORDER_BACKFILL_KEY);
   await db.prepare(`UPDATE products SET variant_group = 'legacy-' || (
     SELECT MIN(p2.id) FROM products p2
     WHERE LOWER(COALESCE(p2.brand, '')) = LOWER(COALESCE(products.brand, ''))
