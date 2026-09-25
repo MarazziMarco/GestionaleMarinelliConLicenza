@@ -71,7 +71,7 @@ export function localFiscalBridgeRequest(message: Record<string, unknown> | stri
     if (isPrint) localFiscalPrintActive = true;
     let settled = false;
     const socket = new WebSocket("ws://localhost:8080/", "marinelli-rt");
-    const openTimer = window.setTimeout(() => finish(new Error("Collegamento locale al registratore non disponibile. Verificare l'Agent locale.")), 6000);
+    const openTimer = window.setTimeout(() => finish(new Error("Ponte RT non raggiungibile su questo PC (localhost:8080). Controlla che il ponte sia avviato e che questa pagina sia aperta sul PC della cassa.")), 6000);
     const responseTimer = window.setTimeout(() => finish(new Error("Il registratore non ha concluso la stampa entro il tempo previsto.")), responseTimeout);
 
     function finish(result: Record<string, unknown> | Error) {
@@ -101,7 +101,7 @@ export function localFiscalBridgeRequest(message: Record<string, unknown> | stri
           if (result.ok === true) finish(result);
           else {
             const code = String(result.code || "");
-            const message = ["RT_NACK", "RCH_NACK"].includes(code) ? "Errore Cassa RCH" : String(result.error || "Errore registratore fiscale.");
+            const message = String(result.error || (["RT_NACK", "RCH_NACK"].includes(code) ? "La cassa RCH ha rifiutato il comando." : "Errore registratore fiscale."));
             finish(Object.assign(new Error(message), { code }));
           }
         } catch {
@@ -112,14 +112,14 @@ export function localFiscalBridgeRequest(message: Record<string, unknown> | stri
       })();
     });
 
-    socket.addEventListener("error", () => finish(new Error("Collegamento locale al registratore non disponibile.")));
+    socket.addEventListener("error", () => finish(new Error("Connessione al ponte RT locale non riuscita (localhost:8080). Controlla l'avvio del ponte sul PC della cassa.")));
     socket.addEventListener("close", () => {
-      if (!settled) finish(new Error("Il collegamento locale al registratore si è interrotto."));
+      if (!settled) finish(new Error("Il ponte RT locale ha chiuso la connessione durante la richiesta. Controlla il registro bridge.log sul PC della cassa."));
     });
   });
 }
 
-async function confirmPhysicalRchPrint(jobId: number, bridgeResult: Record<string, unknown>) {
+export async function confirmPhysicalRchPrint(jobId: number, bridgeResult: Record<string, unknown>) {
   if (bridgeResult.requiresPhysicalConfirmation !== true) return;
   const printed = window.confirm("La RCH ha stampato e fatto avanzare lo scontrino completo? Conferma soltanto dopo averlo verificato fisicamente.");
   if (!printed) {

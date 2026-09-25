@@ -509,7 +509,7 @@ async function setProductDiscount(user: SessionUser, body: JsonMap) {
 }
 
 async function updateProduct(user: SessionUser, body: JsonMap) {
-  const denied = adminOnly(user); if (denied) return denied;
+  if (user.role !== "admin" && !user.store) return json({ error: "Operazione non autorizzata." }, 403);
   const productId = Math.round(numberValue(body.id));
   const product = await database().prepare(`SELECT id, variant_group AS variantGroup FROM products WHERE id = ? AND active = 1`).bind(productId).first<{ id: number; variantGroup: string | null }>();
   if (!product) return json({ error: "Prodotto non trovato." }, 404);
@@ -532,7 +532,7 @@ async function updateProduct(user: SessionUser, body: JsonMap) {
   const stock = await all<{ store: Store; reserved: number }>(`SELECT store, reserved FROM inventory WHERE product_id = ?`, productId);
   const viterboReserved = Number(stock.find((row) => row.store === "Viterbo")?.reserved ?? 0);
   const granSassoReserved = Number(stock.find((row) => row.store === "Gran Sasso")?.reserved ?? 0);
-  if (viterboQty < viterboReserved || granSassoQty < granSassoReserved) return json({ error: "La giacenza non può essere inferiore alla quantità già prenotata." }, 409);
+  if (((user.role === "admin" || user.store === "Viterbo") && viterboQty < viterboReserved) || ((user.role === "admin" || user.store === "Gran Sasso") && granSassoQty < granSassoReserved)) return json({ error: "La giacenza non può essere inferiore alla quantità già prenotata." }, 409);
   const db = database();
   const statements = [
     db.prepare(`UPDATE products SET name = ?, brand = ?, category = ?, price = ? WHERE variant_group = ?`).bind(name, brand, category, price, product.variantGroup),
@@ -540,8 +540,8 @@ async function updateProduct(user: SessionUser, body: JsonMap) {
     db.prepare(`UPDATE products SET sku = ?, color = ?, size = ? WHERE id = ?`).bind(sku, color, size, productId),
     db.prepare(`DELETE FROM product_eans WHERE product_id = ?`).bind(productId),
     ...eans.map((ean) => db.prepare(`INSERT INTO product_eans (product_id, ean) VALUES (?, ?)`).bind(productId, ean)),
-    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ? WHERE product_id = ? AND store = 'Viterbo'`).bind(viterboQty, viterboReorderLevel, productId),
-    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ? WHERE product_id = ? AND store = 'Gran Sasso'`).bind(granSassoQty, granSassoReorderLevel, productId),
+    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ? WHERE product_id = ? AND store = 'Viterbo' AND ? = 1`).bind(viterboQty, viterboReorderLevel, productId, user.role === 'admin' || user.store === 'Viterbo' ? 1 : 0),
+    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ? WHERE product_id = ? AND store = 'Gran Sasso' AND ? = 1`).bind(granSassoQty, granSassoReorderLevel, productId, user.role === 'admin' || user.store === 'Gran Sasso' ? 1 : 0),
   ];
   await db.batch(statements);
   return json({ ok: true });
@@ -1146,7 +1146,7 @@ async function retryFiscalJob(user: SessionUser, body: JsonMap) {
   if (!job) return json({ error: "Richiesta fiscale non trovata." }, 404);
   if (user.role !== "admin" && user.store !== job.store) return json({ error: "Operazione non autorizzata per questa cassa." }, 403);
   const staleProcessing = job.status === "processing" && job.claimedAt && Date.now() - new Date(job.claimedAt).getTime() > 120000;
-  if (!["error", "awaiting_setup"].includes(job.status) && !staleProcessing) return json({ error: "Questa richiesta non può essere rimessa in coda. Attendi almeno due minuti se la stampa è rimasta bloccata." }, 409);
+  if (!["error", "awaiting_setup", "queued"].includes(job.status) && !staleProcessing) return json({ error: "Questa richiesta non può essere rimessa in coda. Attendi almeno due minuti se la stampa è rimasta bloccata." }, 409);
   const device = await database().prepare(`SELECT enabled, token_hash AS tokenHash FROM fiscal_devices WHERE store = ?`).bind(job.store).first<{ enabled: number; tokenHash: string | null }>();
   if (!device?.enabled || !device.tokenHash) return json({ error: "Il ponte Windows del negozio non è abilitato." }, 409);
   const localFiscalTicket = randomLocalTicket();
@@ -1156,8 +1156,9 @@ async function retryFiscalJob(user: SessionUser, body: JsonMap) {
   const payloadObj = JSON.parse(job.payload) as JsonMap;
   payloadObj.localTicketHash = ticketHash;
   payloadObj.localTicketExpiresAt = ticketExpiresAt;
-  await database().prepare(`UPDATE fiscal_jobs SET status = 'queued', payload = ?, claimed_at = NULL, device_response = NULL, updated_at = ? WHERE id = ?`)
-    .bind(JSON.stringify(payloadObj), now, job.id).run();
+  const updated = await database().prepare(`UPDATE fiscal_jobs SET status = 'queued', payload = ?, claimed_at = NULL, device_response = NULL, updated_at = ? WHERE id = ? AND status = ?`)
+    .bind(JSON.stringify(payloadObj), now, job.id, job.status).run();
+  if (!updated.meta?.changes) return json({ error: "Lo stato della richiesta è cambiato. Aggiorna la pagina prima di riprovare." }, 409);
   await database().prepare(`UPDATE sales SET fiscal_status = 'queued' WHERE id = ?`).bind(job.saleId).run();
   const localFiscalPayload = { ...payloadObj };
   delete localFiscalPayload.localTicketHash;
