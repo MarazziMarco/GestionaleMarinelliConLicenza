@@ -412,6 +412,7 @@ td small { margin-top: .16rem; font-size: .62rem; }
 .status.reorder-soon { background: #2a210d; color: #ffd36a; }
 .reorder-panel { padding-top: 1rem; }
 .reorder-filters { display: grid; grid-template-columns: minmax(240px,1.6fr) repeat(4,minmax(130px,.7fr)); gap: .7rem; align-items: end; }
+.warehouse-filters { grid-template-columns: minmax(240px,1.6fr) repeat(3,minmax(130px,.7fr)); margin-top: .9rem; }
 .reorder-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin: .9rem 0 .35rem; padding-top: .8rem; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: .72rem; }
 .reorder-toolbar button { display: inline-flex; align-items: center; gap: .35rem; }
 .reorder-table { min-width: 1100px; }
