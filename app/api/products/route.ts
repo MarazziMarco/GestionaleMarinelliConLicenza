@@ -172,8 +172,12 @@ async function postImpl(request: Request) {
       if (!productId) throw new Error("Variante non creata.");
       createdIds.push(productId);
       for (const ean of variant.eans) await database().prepare(`INSERT INTO product_eans (product_id, ean) VALUES (?, ?)`).bind(productId, ean).run();
-      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Viterbo', ?, 0, ?, ?)`).bind(productId, viterboQty, variant.viterboReorderLevel, viterboQty > 0 ? 1 : 0).run();
-      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Gran Sasso', ?, 0, ?, ?)`).bind(productId, granSassoQty, variant.granSassoReorderLevel, granSassoQty > 0 ? 1 : 0).run();
+      // Attivo nel negozio se ha giacenza, oppure se l'ha creato un commesso di quel
+      // negozio: altrimenti una variante a quantita' zero gli sparirebbe dal magazzino.
+      const viterboEnabled = viterboQty > 0 || (user.role !== "admin" && user.store === "Viterbo");
+      const granSassoEnabled = granSassoQty > 0 || (user.role !== "admin" && user.store === "Gran Sasso");
+      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Viterbo', ?, 0, ?, ?)`).bind(productId, viterboQty, variant.viterboReorderLevel, viterboEnabled ? 1 : 0).run();
+      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Gran Sasso', ?, 0, ?, ?)`).bind(productId, granSassoQty, variant.granSassoReorderLevel, granSassoEnabled ? 1 : 0).run();
     }
   } catch (error) {
     for (const productId of createdIds) {
