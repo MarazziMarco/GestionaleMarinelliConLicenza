@@ -803,8 +803,8 @@ td small { margin-top: .16rem; font-size: .62rem; }
 
 /* --- Modal largo (scheda prodotto) --- */
 .modal.modal-wide { max-width: 920px; width: 94vw; }
-.product-detail-card > button { margin-left: auto; align-self: flex-start; }
-@media (max-width: 640px) { .product-detail-card { align-items: stretch; } .product-detail-card > button { margin-left: 0; width: 100%; } }
+.product-detail-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; align-self: flex-start; }
+@media (max-width: 640px) { .product-detail-card { align-items: stretch; } .product-detail-buttons { margin-left: 0; width: 100%; } .product-detail-buttons > button { flex: 1 1 0; } }
 
 /* ===== Form e modali più ampi ed eleganti ===== */
 .modal { width: min(100%, 760px); padding: 1.9rem 2rem; border-radius: 24px; }
