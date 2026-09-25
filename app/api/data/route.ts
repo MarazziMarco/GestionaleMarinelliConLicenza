@@ -1,9 +1,10 @@
-import { currentUser, database, ean13, ensureDatabase, hashToken, idCode, isTestMode, json, logActivity, type SessionUser, type Store } from "../../../lib/runtime-db";
+import { categoryForWrite, currentUser, database, ean13, ensureDatabase, hashToken, idCode, isTestMode, json, logActivity, type SessionUser, type Store } from "../../../lib/runtime-db";
 import { getBucket } from "../../../lib/storage";
 import { withDbScope } from "../../../lib/db";
 import { createAuthUser, setAuthUserPassword, deleteAuthUser } from "../../../lib/supabase-server";
 import { computeNextDocumentNumber } from "../../../lib/pricing";
 import { buildFiscalLines } from "../../../lib/fiscal-lines";
+import { canonicalCategory, categoryKey, categoryNames } from "../../../lib/categories";
 
 type JsonMap = Record<string, unknown>;
 type CartItem = {
@@ -33,6 +34,9 @@ type DocumentLine = {
 };
 
 type ProductRow = Record<string, unknown> & {
+  category: string;
+  viterboTracked: number;
+  granSassoTracked: number;
   viterboQty: number;
   viterboReserved: number;
   granSassoQty: number;
@@ -162,19 +166,24 @@ async function requireUser(request: Request) {
 }
 
 async function productRows() {
-  return all<ProductRow>(`SELECT p.id, p.sku, p.name, p.brand, p.category, p.color, p.size, p.price, p.discount_percent AS discountPercent, p.discount_expires_at AS discountExpiresAt, p.variant_group AS variantGroup, p.photo_key AS photoKey,
+  const rows = await all<ProductRow>(`SELECT p.id, p.sku, p.name, p.brand, p.category, p.color, p.size, p.price, p.discount_percent AS discountPercent, p.discount_expires_at AS discountExpiresAt, p.variant_group AS variantGroup, p.photo_key AS photoKey,
     COALESCE(GROUP_CONCAT(DISTINCT pe.ean), '') AS eans,
     COALESCE(MAX(CASE WHEN i.store = 'Viterbo' THEN i.quantity END), 0) AS viterboQty,
     COALESCE(MAX(CASE WHEN i.store = 'Viterbo' THEN i.reserved END), 0) AS viterboReserved,
     COALESCE(MAX(CASE WHEN i.store = 'Gran Sasso' THEN i.quantity END), 0) AS granSassoQty,
     COALESCE(MAX(CASE WHEN i.store = 'Gran Sasso' THEN i.reserved END), 0) AS granSassoReserved,
     COALESCE(MAX(CASE WHEN i.store = 'Viterbo' THEN i.reorder_level END), 2) AS viterboReorderLevel,
-    COALESCE(MAX(CASE WHEN i.store = 'Gran Sasso' THEN i.reorder_level END), 2) AS granSassoReorderLevel
+    COALESCE(MAX(CASE WHEN i.store = 'Viterbo' THEN i.reorder_enabled END), 0) AS viterboTracked,
+    COALESCE(MAX(CASE WHEN i.store = 'Gran Sasso' THEN i.reorder_level END), 2) AS granSassoReorderLevel,
+    COALESCE(MAX(CASE WHEN i.store = 'Gran Sasso' THEN i.reorder_enabled END), 0) AS granSassoTracked
     FROM products p
     LEFT JOIN product_eans pe ON pe.product_id = p.id
     LEFT JOIN inventory i ON i.product_id = p.id
     WHERE p.active = 1
     GROUP BY p.id ORDER BY p.name, p.color, p.size`);
+  const names = categoryNames(rows.map((row) => row.category));
+  const canonicalByKey = new Map(names.map((name) => [categoryKey(name), name]));
+  return rows.map((row) => ({ ...row, category: canonicalByKey.get(categoryKey(row.category)) ?? row.category.trim() }));
 }
 
 async function customerRows() {
@@ -515,7 +524,7 @@ async function updateProduct(user: SessionUser, body: JsonMap) {
   if (!product) return json({ error: "Prodotto non trovato." }, 404);
   const name = stringValue(body.name);
   const brand = stringValue(body.brand);
-  const category = stringValue(body.category);
+  const category = await categoryForWrite(stringValue(body.category));
   const sku = stringValue(body.sku);
   const color = stringValue(body.color);
   const size = stringValue(body.size);
@@ -540,8 +549,8 @@ async function updateProduct(user: SessionUser, body: JsonMap) {
     db.prepare(`UPDATE products SET sku = ?, color = ?, size = ? WHERE id = ?`).bind(sku, color, size, productId),
     db.prepare(`DELETE FROM product_eans WHERE product_id = ?`).bind(productId),
     ...eans.map((ean) => db.prepare(`INSERT INTO product_eans (product_id, ean) VALUES (?, ?)`).bind(productId, ean)),
-    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ? WHERE product_id = ? AND store = 'Viterbo' AND ? = 1`).bind(viterboQty, viterboReorderLevel, productId, user.role === 'admin' || user.store === 'Viterbo' ? 1 : 0),
-    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ? WHERE product_id = ? AND store = 'Gran Sasso' AND ? = 1`).bind(granSassoQty, granSassoReorderLevel, productId, user.role === 'admin' || user.store === 'Gran Sasso' ? 1 : 0),
+    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ?, reorder_enabled = CASE WHEN ? > 0 THEN 1 ELSE reorder_enabled END WHERE product_id = ? AND store = 'Viterbo' AND ? = 1`).bind(viterboQty, viterboReorderLevel, viterboQty, productId, user.role === 'admin' || user.store === 'Viterbo' ? 1 : 0),
+    db.prepare(`UPDATE inventory SET quantity = ?, reorder_level = ?, reorder_enabled = CASE WHEN ? > 0 THEN 1 ELSE reorder_enabled END WHERE product_id = ? AND store = 'Gran Sasso' AND ? = 1`).bind(granSassoQty, granSassoReorderLevel, granSassoQty, productId, user.role === 'admin' || user.store === 'Gran Sasso' ? 1 : 0),
   ];
   await db.batch(statements);
   return json({ ok: true });
@@ -556,7 +565,7 @@ async function setStock(user: SessionUser, body: JsonMap) {
   const inventory = await database().prepare(`SELECT reserved FROM inventory WHERE product_id = ? AND store = ?`).bind(productId, store).first<{ reserved: number }>();
   if (!inventory) return json({ error: "Giacenza non trovata." }, 404);
   if (quantity < Number(inventory.reserved)) return json({ error: "La giacenza non può essere inferiore ai pezzi prenotati." }, 409);
-  await database().prepare(`UPDATE inventory SET quantity = ? WHERE product_id = ? AND store = ?`).bind(quantity, productId, store).run();
+  await database().prepare(`UPDATE inventory SET quantity = ?, reorder_enabled = 1 WHERE product_id = ? AND store = ?`).bind(quantity, productId, store).run();
   await logActivity({ user, action: "stock", entity: "product", entityId: productId, detail: `Giacenza ${store} impostata a ${quantity}`, store });
   return json({ ok: true, quantity });
 }
@@ -598,8 +607,9 @@ async function importProducts(user: SessionUser, body: JsonMap) {
   let created = 0;
   const skipped: { sku: string; reason: string }[] = [];
   const groupCache = new Map<string, string>();
+  const knownCategories = (await all<{ category: string }>("SELECT DISTINCT category FROM products WHERE active = 1 AND category IS NOT NULL")).map((row) => row.category);
   for (const raw of rows) {
-    const nome = stringValue(raw.nome), marca = stringValue(raw.marca), categoria = stringValue(raw.categoria);
+    const nome = stringValue(raw.nome), marca = stringValue(raw.marca), categoria = canonicalCategory(stringValue(raw.categoria), knownCategories);
     const colore = stringValue(raw.colore), taglia = stringValue(raw.taglia), sku = stringValue(raw.sku);
     const prezzo = Math.round(Math.max(0, numberValue(raw.prezzo)) * 100) / 100;
     const eans = stringValue(raw.ean).split(/[;,\s]+/).map((value) => value.trim()).filter(Boolean);
@@ -622,8 +632,9 @@ async function importProducts(user: SessionUser, body: JsonMap) {
     const productId = result.meta?.last_row_id;
     if (!productId) { skipped.push({ sku, reason: "errore inserimento" }); continue; }
     for (const ean of eans) await db.prepare(`INSERT OR IGNORE INTO product_eans (product_id, ean) VALUES (?, ?)`).bind(productId, ean).run();
-    await db.prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level) VALUES (?, 'Viterbo', ?, 0, 2)`).bind(productId, vt).run();
-    await db.prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level) VALUES (?, 'Gran Sasso', ?, 0, 2)`).bind(productId, gs).run();
+    await db.prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Viterbo', ?, 0, 2, ?)`).bind(productId, vt, vt > 0 ? 1 : 0).run();
+    await db.prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Gran Sasso', ?, 0, 2, ?)`).bind(productId, gs, gs > 0 ? 1 : 0).run();
+    knownCategories.push(categoria);
     created += 1;
   }
   await logActivity({ user, action: "import", entity: "product", detail: `Import CSV: ${created} varianti create, ${skipped.length} saltate` });
@@ -762,7 +773,7 @@ async function updateTransfer(user: SessionUser, body: JsonMap) {
     const delta = item.quantity - oldQuantity;
     if (delta) {
       statements.push(db.prepare(`UPDATE inventory SET quantity = quantity - ? WHERE product_id = ? AND store = ?`).bind(delta, item.productId, transfer.fromStore));
-      statements.push(db.prepare(`UPDATE inventory SET quantity = quantity + ? WHERE product_id = ? AND store = ?`).bind(delta, item.productId, transfer.toStore));
+      statements.push(db.prepare(`UPDATE inventory SET quantity = quantity + ?, reorder_enabled = 1 WHERE product_id = ? AND store = ?`).bind(delta, item.productId, transfer.toStore));
     }
     statements.push(db.prepare(`UPDATE transfer_items SET quantity = ? WHERE transfer_id = ? AND product_id = ?`).bind(item.quantity, transferId, item.productId));
   }
@@ -782,7 +793,7 @@ async function deleteTransfer(user: SessionUser, body: JsonMap) {
   }
   const db = database();
   const statements = items.flatMap((item) => [
-    db.prepare(`UPDATE inventory SET quantity = quantity + ? WHERE product_id = ? AND store = ?`).bind(item.quantity, item.productId, transfer.fromStore),
+    db.prepare(`UPDATE inventory SET quantity = quantity + ?, reorder_enabled = 1 WHERE product_id = ? AND store = ?`).bind(item.quantity, item.productId, transfer.fromStore),
     db.prepare(`UPDATE inventory SET quantity = quantity - ? WHERE product_id = ? AND store = ?`).bind(item.quantity, item.productId, transfer.toStore),
   ]);
   statements.push(db.prepare(`DELETE FROM transfer_items WHERE transfer_id = ?`).bind(transferId));
@@ -960,7 +971,7 @@ async function createSale(user: SessionUser, body: JsonMap) {
       await database().prepare(`UPDATE inventory SET quantity = quantity - ? WHERE product_id = ? AND store = ?`).bind(item.quantity, item.productId, store).run();
     }
     if (item.productId && item.itemType === "return") {
-      await database().prepare(`UPDATE inventory SET quantity = quantity + ? WHERE product_id = ? AND store = ?`).bind(Math.abs(item.quantity), item.productId, store).run();
+      await database().prepare(`UPDATE inventory SET quantity = quantity + ?, reorder_enabled = 1 WHERE product_id = ? AND store = ?`).bind(Math.abs(item.quantity), item.productId, store).run();
     }
     if (item.itemType === "gift") {
       const code = stringValue(item.metadata.code) || ean13();
@@ -1311,7 +1322,7 @@ async function completeTransfer(user: SessionUser, body: JsonMap) {
   for (const item of items) {
     if (!item.productId) continue;
     statements.push(db.prepare(`UPDATE inventory SET quantity = quantity - ? WHERE product_id = ? AND store = ?`).bind(item.quantity, item.productId, transfer.fromStore));
-    statements.push(db.prepare(`UPDATE inventory SET quantity = quantity + ? WHERE product_id = ? AND store = ?`).bind(item.quantity, item.productId, transfer.toStore));
+    statements.push(db.prepare(`UPDATE inventory SET quantity = quantity + ?, reorder_enabled = 1 WHERE product_id = ? AND store = ?`).bind(item.quantity, item.productId, transfer.toStore));
   }
   const sender = stringValue(body.sender) || transfer.fromStore;
   const receiver = stringValue(body.receiver) || transfer.toStore;
@@ -1339,7 +1350,7 @@ async function quickLoad(user: SessionUser, body: JsonMap) {
   const store = user.store ?? (validStore(body.store) ? body.store : "Viterbo");
   const product = await database().prepare(`SELECT p.id, p.name, p.color, p.size FROM products p JOIN product_eans pe ON pe.product_id = p.id WHERE pe.ean = ? AND p.active = 1`).bind(ean).first<{ id: number; name: string; color: string; size: string }>();
   if (!product) return json({ error: "EAN non riconosciuto." }, 404);
-  await database().prepare(`UPDATE inventory SET quantity = quantity + ? WHERE product_id = ? AND store = ?`).bind(quantity, product.id, store).run();
+  await database().prepare(`UPDATE inventory SET quantity = quantity + ?, reorder_enabled = 1 WHERE product_id = ? AND store = ?`).bind(quantity, product.id, store).run();
   await logActivity({ user, action: "load", entity: "product", entityId: product.id, detail: `Carico +${quantity} (${product.name} ${product.color} ${product.size})`, store });
   return json({ ok: true, product, quantity, store });
 }
@@ -1351,7 +1362,7 @@ async function createProduct(user: SessionUser, body: JsonMap) {
   const eans = arrayValue(body.eans).map((value) => stringValue(value)).filter(Boolean);
   if (!name || !brand || !sku || !eans.length) return json({ error: "Nome, marca, SKU e almeno un EAN sono obbligatori." }, 400);
   const variantGroup = crypto.randomUUID();
-  const category = stringValue(body.category);
+  const category = await categoryForWrite(stringValue(body.category));
   const price = numberValue(body.price);
   await database().prepare(`INSERT INTO catalog_products (id, name, brand, category, base_price, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)`)
     .bind(variantGroup, name, brand, category, price, new Date().toISOString()).run();
@@ -1362,8 +1373,8 @@ async function createProduct(user: SessionUser, body: JsonMap) {
   for (const ean of eans) await database().prepare(`INSERT INTO product_eans (product_id, ean) VALUES (?, ?)`).bind(productId, ean).run();
   const viterboQty = user.role === "admin" || user.store === "Viterbo" ? Math.max(0, Math.round(numberValue(body.viterboQty))) : 0;
   const granSassoQty = user.role === "admin" || user.store === "Gran Sasso" ? Math.max(0, Math.round(numberValue(body.granSassoQty))) : 0;
-  await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved) VALUES (?, 'Viterbo', ?, 0)`).bind(productId, viterboQty).run();
-  await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved) VALUES (?, 'Gran Sasso', ?, 0)`).bind(productId, granSassoQty).run();
+  await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_enabled) VALUES (?, 'Viterbo', ?, 0, ?)`).bind(productId, viterboQty, viterboQty > 0 ? 1 : 0).run();
+  await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_enabled) VALUES (?, 'Gran Sasso', ?, 0, ?)`).bind(productId, granSassoQty, granSassoQty > 0 ? 1 : 0).run();
   return json({ ok: true, productId });
 }
 

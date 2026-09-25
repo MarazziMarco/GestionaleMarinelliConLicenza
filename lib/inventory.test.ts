@@ -40,6 +40,13 @@ describe("computeReorderRows", () => {
     const r = computeReorderRows([product({ id: 1, viterboQty: 4, viterboReorderLevel: 1, granSassoQty: 4, granSassoReorderLevel: 1 })], { ...settings, globalMinEnabled: true, globalMin: 5 });
     expect(r).toHaveLength(2); // 4 <= 5 in entrambi
   });
+  it("non riordina articoli mai trattati in quel negozio, ma conserva gli esauriti", () => {
+    const rows = computeReorderRows([
+      product({ id: 1, viterboTracked: 0, granSassoTracked: 1, granSassoQty: 1 }),
+      product({ id: 2, viterboTracked: 1, granSassoTracked: 0, viterboQty: 0 }),
+    ], settings);
+    expect(rows.map((row) => [row.productId, row.store])).toEqual([[1, "Gran Sasso"], [2, "Viterbo"]]);
+  });
   it("scope limita a un negozio", () => {
     const r = computeReorderRows([product({ id: 1, viterboQty: 0, granSassoQty: 0 })], settings, "Viterbo");
     expect(r).toHaveLength(1);

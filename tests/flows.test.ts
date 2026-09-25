@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { boot, type TestApi } from "./helpers/app";
+import { computeReorderRows } from "../lib/inventory";
+import { categoryKey, categoryNames } from "../lib/categories";
 
-type Product = { id: number; name: string; price: number; viterboQty: number; viterboReserved: number };
+type Product = { id: number; name: string; category: string; price: number; viterboQty: number; viterboReserved: number; viterboReorderLevel: number; viterboTracked: number; granSassoQty: number; granSassoReserved: number; granSassoReorderLevel: number; granSassoTracked: number };
 type Sale = { id: number; receiptNo: string; total: number };
 type Gift = { code: string; balance: number };
 type SaleItem = { id: number; saleId: number; productId: number | null };
@@ -115,5 +117,30 @@ describe("flusso vendita (pglite)", () => {
       items: [{ productId: product.id, description: product.name, quantity: -1, unitPrice: product.price, discountPercent: 0, itemType: "return", metadata: { originalSaleItemId: 999999 } }],
     });
     expect(res.status).toBeGreaterThanOrEqual(400); // vendita originale inesistente
+  });
+});
+
+describe("catalogo per negozio (pglite)", () => {
+  it("riusa la categoria e non riordina nell'altro negozio", async () => {
+    const before = await bootstrap();
+    const existingCategory = before.products[0].category;
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const response = await api.post({
+      action: "createProduct", name: "Articolo prova negozio", brand: "Marca prova",
+      category: `  ${existingCategory.toLocaleUpperCase("it")}  `,
+      sku: `TEST-${suffix}`, eans: [`TEST-EAN-${suffix}`], color: "Nero", size: "Unica", price: 10,
+      viterboQty: 0, granSassoQty: 1,
+    });
+    expect(response.status).toBe(200);
+    const created = await response.json();
+    const after = await bootstrap();
+    const product = after.products.find((item) => item.id === created.productId)!;
+    expect(product).toBeTruthy();
+    expect(product.viterboTracked).toBe(0);
+    expect(product.granSassoTracked).toBe(1);
+    expect(categoryKey(product.category)).toBe(categoryKey(existingCategory));
+    expect(categoryNames(after.products.map((item) => item.category)).filter((name) => categoryKey(name) === categoryKey(existingCategory))).toHaveLength(1);
+    const rows = computeReorderRows([product], { globalMinEnabled: false, globalMin: 2, suggestTransfers: true, transferSafety: 0 });
+    expect(rows.map((row) => row.store)).toEqual(["Gran Sasso"]);
   });
 });

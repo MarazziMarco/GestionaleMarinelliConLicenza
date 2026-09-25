@@ -1,4 +1,4 @@
-import { currentUser, database, ensureDatabase, isTestMode, json, logActivity } from "../../../lib/runtime-db";
+import { categoryForWrite, currentUser, database, ensureDatabase, isTestMode, json, logActivity } from "../../../lib/runtime-db";
 import { withDbScope } from "../../../lib/db";
 import { getBucket } from "../../../lib/storage";
 
@@ -114,10 +114,10 @@ async function postImpl(request: Request) {
   if (existingGroup) {
     const base = await database().prepare(`SELECT name, brand, category, base_price AS price FROM catalog_products WHERE id = ?`).bind(existingGroup).first<{ name: string; brand: string; category: string; price: number }>();
     if (!base) return json({ error: "Prodotto base non trovato." }, 404);
-    name = base.name; brand = base.brand; category = base.category; price = base.price;
+    name = base.name; brand = base.brand; category = await categoryForWrite(base.category); price = base.price;
     variantGroup = existingGroup; createCatalog = false;
   } else {
-    name = text(payload.name); brand = text(payload.brand); category = text(payload.category); price = Number(payload.price);
+    name = text(payload.name); brand = text(payload.brand); category = await categoryForWrite(text(payload.category)); price = Number(payload.price);
     if (!name || !brand || !category || !Number.isFinite(price) || price <= 0) return json({ error: "Nome, marca, categoria e prezzo sono obbligatori." }, 400);
     variantGroup = crypto.randomUUID(); createCatalog = true;
   }
@@ -172,8 +172,8 @@ async function postImpl(request: Request) {
       if (!productId) throw new Error("Variante non creata.");
       createdIds.push(productId);
       for (const ean of variant.eans) await database().prepare(`INSERT INTO product_eans (product_id, ean) VALUES (?, ?)`).bind(productId, ean).run();
-      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level) VALUES (?, 'Viterbo', ?, 0, ?)`).bind(productId, viterboQty, variant.viterboReorderLevel).run();
-      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level) VALUES (?, 'Gran Sasso', ?, 0, ?)`).bind(productId, granSassoQty, variant.granSassoReorderLevel).run();
+      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Viterbo', ?, 0, ?, ?)`).bind(productId, viterboQty, variant.viterboReorderLevel, viterboQty > 0 ? 1 : 0).run();
+      await database().prepare(`INSERT INTO inventory (product_id, store, quantity, reserved, reorder_level, reorder_enabled) VALUES (?, 'Gran Sasso', ?, 0, ?, ?)`).bind(productId, granSassoQty, variant.granSassoReorderLevel, granSassoQty > 0 ? 1 : 0).run();
     }
   } catch (error) {
     for (const productId of createdIds) {

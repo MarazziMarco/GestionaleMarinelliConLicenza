@@ -5,6 +5,7 @@ export type Store = "Viterbo" | "Gran Sasso";
 
 export type StockProduct = {
   id: number;
+  viterboTracked?: number; granSassoTracked?: number;
   viterboQty: number; viterboReserved: number; viterboReorderLevel: number;
   granSassoQty: number; granSassoReserved: number; granSassoReorderLevel: number;
 };
@@ -22,6 +23,7 @@ export function computeReorderRows(products: StockProduct[], settings: ReorderSe
   const stores: Store[] = scope === "Tutti" ? ["Viterbo", "Gran Sasso"] : [scope];
   for (const p of products) {
     for (const store of stores) {
+      if (store === "Viterbo" && p.viterboTracked === 0 || store === "Gran Sasso" && p.granSassoTracked === 0) continue;
       const viterbo = p.viterboQty - p.viterboReserved;
       const granSasso = p.granSassoQty - p.granSassoReserved;
       const available = store === "Viterbo" ? viterbo : granSasso;
