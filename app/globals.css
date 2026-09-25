@@ -39,6 +39,9 @@
   --action-b: #2ba6db;
   --action-ink: #04151d;
   --action-ring: rgba(114,215,255,.45);
+  --action-deep-a: #1d6f95;
+  --action-deep-b: #06384f;
+  --action-deep-ink: #eaf7ff;
 }
 
 /* Tema chiaro: sidebar resta scura, contenuto chiaro. */
@@ -72,6 +75,9 @@
   --action-b: #e8710a;
   --action-ink: #2a1503;
   --action-ring: rgba(232,113,10,.4);
+  --action-deep-a: #b3560a;
+  --action-deep-b: #7a3800;
+  --action-deep-ink: #fff6ec;
 }
 
 * { box-sizing: border-box; }
@@ -203,8 +209,8 @@ small { color: var(--ink-soft); }
 .dash-action span { display: block; font-weight: 800; font-size: .75rem; opacity: .9; }
 .dash-action .material-symbols-rounded { flex: 0 0 auto; width: 42px; height: 42px; display: inline-flex; align-items: center; justify-content: center; border-radius: 14px; background: rgba(4,21,29,.13); font-size: 26px; }
 .dash-action.reorder { background: linear-gradient(135deg, var(--action-a), var(--action-b)); }
-.dash-action.discount { background: linear-gradient(135deg, #b79bff, #7c4dff); color: #fff; }
-.dash-action.discount .material-symbols-rounded { background: rgba(255,255,255,.18); }
+.dash-action.discount { background: linear-gradient(135deg, var(--action-deep-a), var(--action-deep-b)); color: var(--action-deep-ink); }
+.dash-action.discount .material-symbols-rounded { background: rgba(255,255,255,.16); }
 .dash-action.reorder.open { outline: 3px solid var(--action-ring); outline-offset: 2px; }
 .two-columns, .warehouse-grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 1rem; }
 .two-columns > .panel + .panel, .warehouse-grid > .panel + .panel { margin-top: 0; }
