@@ -1,18 +1,18 @@
 COLLEGAMENTO AUTOMATICO WINDOWS REGISTRATORI TELEMATICI — MARINELLI STEFANO
 
-Il collegamento viene installato una sola volta, parte automaticamente all'accesso di Windows e resta nascosto. L'operatore deve soltanto aprire il gestionale nel browser. Il sito non espone il registratore su Internet: il browser dialoga esclusivamente con ws://localhost:8080 e il ponte accetta soltanto l'origine del gestionale pubblicato.
+Il collegamento viene installato una sola volta, parte automaticamente all'accensione del computer come SISTEMA, anche prima dell'accesso a Windows, e resta nascosto. L'operatore deve soltanto aprire il gestionale nel browser. Il sito non espone il registratore su Internet: il browser dialoga esclusivamente con ws://localhost:8080 e il ponte accetta soltanto l'origine del gestionale pubblicato.
 
 INSTALLAZIONE RAPIDA
 1. Nel gestionale aprire Amministrazione > Registratori RT e generare la chiave del negozio.
-2. Viterbo: estrarre dallo ZIP l'unico file Marinelli-RT-Viterbo.cmd e fare doppio clic. Gran Sasso: estrarre il pacchetto e fare doppio clic su Installa-Gran-Sasso.cmd.
-3. Confermare la richiesta di Windows e incollare la chiave quando viene chiesta. L'installazione verifica subito che appartenga al negozio corretto e abilita automaticamente il ponte.
+2. Gran Sasso: scaricare una sola volta Marinelli-RT-Gran-Sasso.zip, estrarre tutto lo ZIP sul PC del negozio e fare doppio clic su Installa-Gran-Sasso.cmd. Dopo l'installazione il pacchetto scaricato non serve piu. Viterbo: usare Marinelli-RT-Viterbo.cmd.
+3. Confermare la richiesta di Windows, incollare la chiave del Gran Sasso e indicare i percorsi EpsonFpMate.exe e Settings.xml se diversi da quelli proposti. L'installazione verifica la chiave e imposta sempre https://gestionale-stefano-marinelli.vercel.app.
 4. Tornare nel gestionale e attendere lo stato "Collegato". Se la chiave è errata, l'installazione si interrompe senza avviare il ponte.
 5. Fare una stampa in modalità formazione insieme al tecnico fiscale. Se il collaudo non riesce, disabilitare il collegamento fino alla correzione.
 
 GRAN SASSO — EPSON FP-81 II RT
 1. Fare installare/configurare EpsonFpMate dal tecnico fiscale Epson.
 2. In EpsonFpMateConfig abilitare il file di output, scegliere formato XML, disattivare l'inserimento del timestamp e impostare il prefisso "Out". Impostare la cartella di output indicata nel config.json.
-3. Il programma di installazione verifica EpsonFpMate, protegge la chiave locale e configura l'avvio automatico. I documenti XML usano i comandi fiscali Epson ufficiali printRecItem, printRecSubtotal, printRecTotal, printRecRefund ed endFiscalReceipt.
+3. Il programma di installazione verifica EpsonFpMate e Settings.xml, protegge la chiave locale e configura l'avvio all'accensione senza login. Se la chiave viene rigenerata dal browser del PC Gran Sasso, arriva al ponte automaticamente. Se viene rigenerata da un altro PC, eseguire C:\ProgramData\MarinelliRTBridge\GranSasso\Aggiorna-Chiave-Gran-Sasso.cmd sul PC Gran Sasso: non serve reinstallare. I documenti XML usano i comandi fiscali Epson ufficiali printRecItem, printRecSubtotal, printRecTotal, printRecRefund ed endFiscalReceipt.
 4. Il tecnico deve verificare numero stampante, reparto IVA, indici dei pagamenti e cartella di esito.
 
 VITERBO — RCH PRINT! 3.0 RT

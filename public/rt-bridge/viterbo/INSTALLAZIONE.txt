@@ -1,6 +1,6 @@
 COLLEGAMENTO AUTOMATICO WINDOWS REGISTRATORI TELEMATICI — MARINELLI STEFANO
 
-Il collegamento viene installato una sola volta, parte automaticamente all'accesso di Windows e resta nascosto. L'operatore deve soltanto aprire il gestionale nel browser. Il sito non espone il registratore su Internet: il browser dialoga esclusivamente con ws://localhost:8080 e il ponte accetta soltanto l'origine del gestionale pubblicato.
+Il collegamento viene installato una sola volta, parte automaticamente all'accensione del computer come SISTEMA, anche prima dell'accesso a Windows, e resta nascosto. L'operatore deve soltanto aprire il gestionale nel browser. Il sito non espone il registratore su Internet: il browser dialoga esclusivamente con ws://localhost:8080 e il ponte accetta soltanto l'origine del gestionale pubblicato.
 
 INSTALLAZIONE RAPIDA
 1. Nel gestionale aprire Amministrazione > Registratori RT e generare la chiave del negozio.

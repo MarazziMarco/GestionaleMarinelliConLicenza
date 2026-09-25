@@ -5,6 +5,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$script:FormaChiave = '^msrt_[A-Za-z0-9_-]{20,}$'
 
 function Write-BridgeLog {
   param([string]$Message, [string]$Level = "INFO")
@@ -38,6 +40,72 @@ function Invoke-BridgeApi {
     return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers -UseBasicParsing -TimeoutSec 30
   }
   return Invoke-RestMethod -Method $Method -Uri $uri -Headers $headers -ContentType "application/json; charset=utf-8" -Body ($Body | ConvertTo-Json -Depth 20 -Compress) -UseBasicParsing -TimeoutSec 30
+}
+
+function Test-ChiaveSulGestionale {
+  param([string]$BaseUrl, [string]$Store, [string]$Token)
+  if ([string]::IsNullOrWhiteSpace($Token)) { return "Nessuna chiave impostata." }
+  $uri = "$($BaseUrl.TrimEnd('/'))/api/fiscal?store=$([Uri]::EscapeDataString($Store))&action=status"
+  try {
+    Invoke-RestMethod -Method Get -Uri $uri -Headers @{ Authorization = "Bearer $Token" } -UseBasicParsing -TimeoutSec 30 | Out-Null
+    return $null
+  } catch [Net.WebException] {
+    $stato = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+    if ($stato -eq 401) { return "Il gestionale rifiuta questa chiave (401). Controlla che in Amministrazione > Registratori RT lo Stato di $Store sia Abilitato." }
+    if ($stato -eq 400) { return "Il gestionale non riconosce il negozio '$Store'." }
+    if ($stato -gt 0) { return "Il gestionale ha risposto $stato." }
+    return "Gestionale non raggiungibile: $($_.Exception.Message)"
+  } catch {
+    return "Gestionale non raggiungibile: $($_.Exception.Message)"
+  }
+}
+
+# Comando locale setDeviceToken: il gestionale consegna qui la chiave appena
+# rigenerata, sul canale WebSocket che ha gia' aperto.
+#
+# La chiave viene provata PRIMA di essere scritta: se non e' buona, config.json
+# resta quello di prima e il ponte continua a girare com'era. Il caso peggiore
+# e' che non cambi niente.
+function Set-ChiavePonte {
+  param([object]$Request)
+
+  $negozioRichiesto = [string]$Request.store
+  if ($negozioRichiesto -ne [string]$script:Config.Store) {
+    Write-BridgeLog "Chiave rifiutata: arrivata per '$negozioRichiesto' ma questo ponte e' $($script:Config.Store)." "WARN"
+    return @{ ok = $false; code = "STORE_MISMATCH"; error = "Questo ponte e' configurato per $($script:Config.Store)." }
+  }
+
+  $nuova = ([string]$Request.token).Trim()
+  if ($nuova -notmatch $script:FormaChiave) {
+    Write-BridgeLog "Chiave rifiutata: forma non valida." "WARN"
+    return @{ ok = $false; code = "INVALID_TOKEN"; error = "La chiave non ha la forma attesa." }
+  }
+
+  if ($nuova -eq [string]$script:Config.DeviceToken) {
+    Write-BridgeLog "Chiave gia' in uso, niente da fare."
+    return @{ ok = $true; changed = $false; store = [string]$script:Config.Store }
+  }
+
+  $problema = Test-ChiaveSulGestionale -BaseUrl $script:Config.ApiBaseUrl -Store $script:Config.Store -Token $nuova
+  if ($problema) {
+    Write-BridgeLog "Chiave nuova non accettata dal gestionale: $problema" "WARN"
+    return @{ ok = $false; code = "TOKEN_REFUSED"; error = $problema }
+  }
+
+  $percorso = $ConfigPath
+  if (-not (Test-Path -LiteralPath $percorso)) {
+    return @{ ok = $false; code = "NO_CONFIG"; error = "config.json non trovato: $percorso" }
+  }
+  Copy-Item -LiteralPath $percorso -Destination "$percorso.bak" -Force
+  $salvata = Get-Content -LiteralPath $percorso -Raw | ConvertFrom-Json
+  $salvata.DeviceToken = $nuova
+  ($salvata | ConvertTo-Json -Depth 20) | Set-Content -LiteralPath $percorso -Encoding UTF8
+
+  # Invoke-BridgeApi rilegge $script:Config.DeviceToken a ogni chiamata,
+  # quindi aggiornarlo qui basta: niente riavvio del ponte.
+  $script:Config.DeviceToken = $nuova
+  Write-BridgeLog "Chiave aggiornata dal gestionale e salvata (copia in config.json.bak)."
+  return @{ ok = $true; changed = $true; store = [string]$script:Config.Store }
 }
 
 function Format-ItalianNumber([double]$Value) {
@@ -672,6 +740,8 @@ function Start-LocalWebSocketBridge {
           }
         } elseif ([string]$request.action -eq "printFiscalReceipt") {
           $response = Invoke-TicketedFiscalPrint -Request $request
+        } elseif ([string]$request.action -eq "setDeviceToken") {
+          $response = Set-ChiavePonte -Request $request
         } else {
           $response = @{ ok = $false; code = "INVALID_ACTION"; error = "Operazione locale non disponibile." }
         }
