@@ -13,7 +13,7 @@ Due livelli, meglio averli entrambi.
    giorno, vale i pochi € al mese.
 3. Ripristino: dalla stessa pagina, "Restore" a una data/ora. (Test: vedi sotto.)
 
-Senza piano a pagamento hai comunque backup giornalieri limitati: aggiungi il livello 2.
+Sul piano gratuito i backup nativi non sono scaricabili né ripristinabili dalla dashboard: il livello 2 è indispensabile.
 
 ## 2) Copia esterna con GitHub Actions (SECONDARIO, portabile)
 
@@ -27,12 +27,14 @@ copia indipendente da Supabase.
 2. GitHub → repo → **Settings → Secrets and variables → Actions → New repository secret**:
    - nome: `BACKUP_DATABASE_URL`
    - valore: la connection string del punto 1 (con la password).
-3. GitHub → **Add file → Create new file** → percorso `.github/workflows/backup.yml` →
-   incolla il contenuto di [`backup.workflow.yml`](./backup.workflow.yml) → commit.
-   (Va aggiunto da GitHub perché il token della CLI non ha lo scope `workflow`.)
+3. Il workflow è già in `.github/workflows/backup.yml` (copia in
+   [`backup.workflow.yml`](./backup.workflow.yml)). Usa `pg_dump` 17: deve essere di versione
+   uguale o superiore al server Supabase (oggi 17.6), altrimenti si rifiuta di partire.
 4. Tab **Actions → Backup DB → Run workflow** per provarlo subito. Poi gira ogni notte.
 
-I dump restano 30 giorni come artifact (scaricabili da ogni run). Per conservarli più a
+I dump contengono gli schemi `public` e `sandbox` (tutti i dati del gestionale). Non includono gli
+account di login Supabase (schema `auth`, pochi utenti, si ricreano) né le foto prodotto (Supabase
+Storage). Restano 30 giorni come artifact (scaricabili da ogni run, solo da chi ha accesso al repo privato). Per conservarli più a
 lungo, scaricali periodicamente o cambia `retention-days`.
 
 ## Ripristino da un dump (`.sql.gz`)

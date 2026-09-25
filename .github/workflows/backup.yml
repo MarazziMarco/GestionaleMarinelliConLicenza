@@ -1,0 +1,38 @@
+# Backup giornaliero del database del gestionale (schemi public e sandbox).
+# Richiede il secret BACKUP_DATABASE_URL: connection string Supabase in session
+# mode (porta 5432; pg_dump non funziona sul transaction pooler 6543).
+# Le foto prodotto stanno in Supabase Storage e non sono incluse nel dump.
+name: Backup DB
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # ogni giorno alle 02:00 UTC (04:00 in Italia d'estate)
+  workflow_dispatch: {} # avvio manuale dalla tab Actions
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Installa pg_dump 17 (deve essere >= della versione del server, 17.x)
+        run: |
+          set -e
+          echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" | sudo tee /etc/apt/sources.list.d/pgdg.list
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-17
+      - name: Dump del database
+        run: |
+          set -e
+          ts=$(date +%Y%m%d-%H%M)
+          /usr/lib/postgresql/17/bin/pg_dump --no-owner --no-privileges --schema=public --schema=sandbox "$DATABASE_URL" | gzip > "backup-$ts.sql.gz"
+          ls -lh backup-*.sql.gz
+          # Un dump quasi vuoto vuol dire che qualcosa non va: meglio far fallire il job.
+          test "$(gzip -dc backup-$ts.sql.gz | grep -c '^COPY ')" -gt 10
+        env:
+          DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+      - name: Salva come artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup
+          path: backup-*.sql.gz
+          retention-days: 30
