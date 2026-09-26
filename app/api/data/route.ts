@@ -3,7 +3,7 @@ import { getBucket } from "../../../lib/storage";
 import { withDbScope } from "../../../lib/db";
 import { createAuthUser, setAuthUserPassword, deleteAuthUser } from "../../../lib/supabase-server";
 import { computeNextDocumentNumber } from "../../../lib/pricing";
-import { buildFiscalLines } from "../../../lib/fiscal-lines";
+import { buildFiscalLines, type FiscalItem } from "../../../lib/fiscal-lines";
 import { canonicalCategory, categoryKey, categoryNames } from "../../../lib/categories";
 
 type JsonMap = Record<string, unknown>;
@@ -1165,6 +1165,14 @@ async function retryFiscalJob(user: SessionUser, body: JsonMap) {
   const ticketExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
   const now = new Date().toISOString();
   const payloadObj = JSON.parse(job.payload) as JsonMap;
+  // Le richieste salvate prima del 26/09 portano lo sconto sul totale come
+  // aggiustamento (=V-, rifiutato dalla RCH con E5): le righe si ricalcolano con
+  // la regola attuale, che lo ripartisce sui prezzi.
+  if (Array.isArray(payloadObj.lines) && typeof payloadObj.total === "number") {
+    const rebuilt = buildFiscalLines(payloadObj.lines as FiscalItem[], payloadObj.total);
+    payloadObj.lines = rebuilt.lines;
+    payloadObj.adjustment = rebuilt.adjustment;
+  }
   payloadObj.localTicketHash = ticketHash;
   payloadObj.localTicketExpiresAt = ticketExpiresAt;
   const updated = await database().prepare(`UPDATE fiscal_jobs SET status = 'queued', payload = ?, claimed_at = NULL, device_response = NULL, updated_at = ? WHERE id = ? AND status = ?`)
