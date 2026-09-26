@@ -853,8 +853,11 @@ function Invoke-RchStandardTcp {
     }
   }
   if ($saleLines.Count) {
-    $commands.Add('=S')
     $adjustmentCents = if ($returnLines.Count) { 0L } else { ConvertTo-RchCents ([double]$payload.adjustment) }
+    # Il subtotale serve solo come appoggio per sconto/maggiorazione sul totale:
+    # senza aggiustamento si chiude direttamente col pagamento, come a mano (TOTALE).
+    # Il gestionale ripartisce gia' sconti e buoni sulle righe, quindi di norma non c'e'.
+    if ($adjustmentCents -ne 0) { $commands.Add('=S') }
     if ($adjustmentCents -lt 0) { $commands.Add("=V-/`$$([Math]::Abs($adjustmentCents))/(SCONTO TOTALE)") }
     elseif ($adjustmentCents -gt 0) { $commands.Add("=V+/`$$adjustmentCents/(MAGGIORAZIONE TOTALE)") }
     $saleTotalCents += $adjustmentCents
