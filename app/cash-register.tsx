@@ -473,42 +473,56 @@ function CashSearch({ products, services, available, onProduct, onService }: {
   </div>;
 }
 
-function CustomerInline({ data, store, customer, onSelect, reload }: {
-  data: CashData;
+// Il nome digitato in cassa diventa Nome + Cognome: l'ultima parola e il cognome.
+function splitName(value: string) {
+  const tokens = value.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return { firstName: tokens[0] ?? "", lastName: "" };
+  return { firstName: tokens.slice(0, -1).join(" "), lastName: tokens[tokens.length - 1] };
+}
+
+function NewCustomerForm({ store, reload, onCreated, close, initialName = "" }: {
   store: Store;
-  customer: Customer | null;
-  onSelect: (customer: Customer | null) => void;
   reload: () => Promise<void>;
+  onCreated: (customer: Customer) => void;
+  close: () => void;
+  initialName?: string;
 }) {
-  const [query, setQuery] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [form, setForm] = useState({ ...splitName(initialName), phone: "", email: "", address: "", postalCode: "", city: "", province: "", taxCode: "" });
   const [error, setError] = useState("");
-  const q = query.trim().toLocaleLowerCase("it");
-  const matches = q ? data.customers.filter((c) => `${customerLabel(c)} ${c.phone}`.toLocaleLowerCase("it").includes(q)).slice(0, 6) : [];
-  // Serve Nome E Cognome (almeno due parole): il server esige entrambi.
-  const hasFullName = query.trim().split(/\s+/).length >= 2;
-  const canCreate = hasFullName && !matches.some((c) => customerLabel(c).toLocaleLowerCase("it") === q);
-  async function create() {
+  const [busy, setBusy] = useState(false);
+  const set = (name: keyof typeof form) => (value: string) => setForm((current) => ({ ...current, [name]: value }));
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
     setError("");
-    const tokens = query.trim().split(/\s+/);
-    const lastName = tokens[tokens.length - 1];
-    const firstName = tokens.slice(0, -1).join(" ");
     setBusy(true);
     try {
-      const result = await post("createCustomer", { firstName, lastName, store });
+      const result = await post("createCustomer", { ...form, store });
       await reload();
-      if (result?.customer) onSelect(result.customer as Customer);
-      setQuery("");
+      if (result?.customer) onCreated(result.customer as Customer);
+      close();
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Errore."); }
     finally { setBusy(false); }
   }
+  return <form className="stack" onSubmit={save}><div className="form-grid"><ClearableInput label="Nome" value={form.firstName} onChange={set("firstName")} required autoFocus={!form.firstName} /><ClearableInput label="Cognome" value={form.lastName} onChange={set("lastName")} required autoFocus={!!form.firstName && !form.lastName} /><ClearableInput label="Telefono (facoltativo)" value={form.phone} onChange={set("phone")} inputMode="tel" autoFocus={!!form.firstName && !!form.lastName} /><ClearableInput label="Email (facoltativa)" type="email" value={form.email} onChange={set("email")} /><ClearableInput className="full" label="Indirizzo (facoltativo)" value={form.address} onChange={set("address")} /><ClearableInput label="CAP" value={form.postalCode} onChange={set("postalCode")} /><ClearableInput label="Comune" value={form.city} onChange={set("city")} /><ClearableInput label="Provincia" value={form.province} onChange={set("province")} maxLength={2} /><ClearableInput className="full" label="Codice fiscale (utile per la garanzia)" value={form.taxCode} onChange={set("taxCode")} />{error && <div className="alert danger full">{error}</div>}<div className="form-actions full"><button type="button" className="secondary" onClick={close}>Annulla</button><button className="primary" disabled={busy}>{busy ? "Salvataggio…" : "Salva e associa alla vendita"}</button></div></div></form>;
+}
+
+function CustomerInline({ data, customer, onSelect, onNew }: {
+  data: CashData;
+  customer: Customer | null;
+  onSelect: (customer: Customer | null) => void;
+  onNew: (prefill: string) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const q = query.trim().toLocaleLowerCase("it");
+  const matches = q ? data.customers.filter((c) => `${customerLabel(c)} ${c.phone}`.toLocaleLowerCase("it").includes(q)).slice(0, 6) : [];
+  function openNew() { onNew(query); setQuery(""); }
   if (customer) return <div className="customer-chip"><MaterialIcon>person</MaterialIcon><span>{customerLabel(customer)}</span><button type="button" onClick={() => onSelect(null)} aria-label="Rimuovi cliente"><MaterialIcon>close</MaterialIcon></button></div>;
   return <div className="customer-inline">
     <div className="customer-inline-field"><MaterialIcon>person_search</MaterialIcon><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Associa cliente: Nome Cognome…" /></div>
+    <button type="button" className="secondary customer-inline-new" onClick={() => onNew("")} title="Nuovo cliente" aria-label="Nuovo cliente"><MaterialIcon>add</MaterialIcon></button>
     {q && <div className="customer-inline-drop">
       {matches.map((c) => <button type="button" key={c.id} onClick={() => { onSelect(c); setQuery(""); }}><strong>{customerLabel(c)}</strong><small>{c.phone || c.city || "—"}</small></button>)}
-      {canCreate && <button type="button" className="create" disabled={busy} onClick={create}><MaterialIcon>add</MaterialIcon> Crea "{query.trim()}"</button>}
-      {error && <div className="alert danger">{error}</div>}
+      <button type="button" className="create" onClick={openNew}><MaterialIcon>person_add</MaterialIcon> Aggiungi nuovo cliente</button>
     </div>}
   </div>;
 }
@@ -516,6 +530,7 @@ function CustomerInline({ data, store, customer, onSelect, reload }: {
 function OperationsMenu({ store, onPick }: { store: Store; onPick: (modal: string) => void }) {
   const [open, setOpen] = useState(false);
   const items: [string, string, string][] = [
+    ["customer", "person_add", "Nuovo cliente"],
     ["gift", "redeem", "Buono regalo"],
     ["varie", "shopping_bag", "Varie"],
     ["reservation", "calendar_month", "Prenotazione"],
@@ -525,7 +540,7 @@ function OperationsMenu({ store, onPick }: { store: Store; onPick: (modal: strin
   return <div className="ops-menu">
     {open && <button className="ops-backdrop" aria-label="Chiudi" onClick={() => setOpen(false)} />}
     <button type="button" className="secondary" onClick={() => setOpen((v) => !v)}><MaterialIcon>bolt</MaterialIcon> Operazioni <MaterialIcon>{open ? "expand_less" : "expand_more"}</MaterialIcon></button>
-    {open && <div className="ops-dropdown">{items.map(([key, icon, label]) => <button type="button" key={key} onClick={() => { onPick(key); setOpen(false); }}><MaterialIcon>{icon}</MaterialIcon> {label}</button>)}</div>}
+    {open && <div className="ops-dropdown">{items.map(([key, icon, label]) => <button type="button" key={key} className={`ops-item-${key}`} onClick={() => { onPick(key); setOpen(false); }}><MaterialIcon>{icon}</MaterialIcon> {label}</button>)}</div>}
   </div>;
 }
 
@@ -534,6 +549,7 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
   const store = data.user.store ?? adminStore;
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [modal, setModal] = useState<string | null>(null);
+  const [customerPrefill, setCustomerPrefill] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [cartDiscount, setCartDiscount] = useState("");
@@ -765,8 +781,8 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
             <CashSearch products={data.products} services={data.services} available={available} onProduct={addProduct} onService={addService} />
           </div>
           <div className="cash-subbar">
-            <CustomerInline data={data} store={store} customer={customer} onSelect={setCustomer} reload={reload} />
-            <OperationsMenu store={store} onPick={setModal} />
+            <CustomerInline data={data} customer={customer} onSelect={setCustomer} onNew={(prefill) => { setCustomerPrefill(prefill); setModal("customer"); }} />
+            <OperationsMenu store={store} onPick={(key) => { if (key === "customer") setCustomerPrefill(""); setModal(key); }} />
           </div>
           <div className="panel cart-panel"><div className="panel-title"><div><p className="eyebrow">VENDITA</p><h2>Prodotti nel carrello</h2></div><span className="count-pill">{cart.length} righe</span></div>{!cart.length ? <Empty>Spara un codice o cerca un prodotto per iniziare.</Empty> : <div className="cart-list">{cart.map((item) => {
   const product = item.productId != null ? data.products.find((p) => p.id === item.productId) : undefined;
@@ -789,7 +805,7 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
           <p className="fine-print">Il bonifico è disponibile soltanto all’amministratore e genera il documento selezionato.</p>
         </aside>
       </div>
-      {modal && <Modal title={modal === "gift" ? "Buono regalo" : modal === "repair" ? "Risuolatura multiprodotto" : modal === "reservation" ? "Prenotazione multiprodotto" : modal === "return" ? "Reso o cambio" : modal === "shirt" ? "Maglie Gran Sasso" : "Varie"} onClose={() => setModal(null)}>{modal === "gift" && <GiftForm add={addDraft} close={() => setModal(null)} />}{modal === "varie" && <ServiceForm title="Vendita varie" defaultDescription="Varie" add={addDraft} close={() => setModal(null)} />}{modal === "shirt" && <ServiceForm title="Vendita dedicata Gran Sasso" defaultDescription="Maglie Gran Sasso" add={addDraft} close={() => setModal(null)} />}{modal === "repair" && <DepositForm products={[]} store={store} repair add={addDraft} close={() => setModal(null)} />}{modal === "reservation" && <DepositForm products={data.products} store={store} repair={false} add={addDraft} close={() => setModal(null)} />}{modal === "return" && <ReturnForm store={store} add={addDraft} close={() => setModal(null)} />}</Modal>}
+      {modal && <Modal title={modal === "customer" ? "Nuovo cliente" : modal === "gift" ? "Buono regalo" : modal === "repair" ? "Risuolatura multiprodotto" : modal === "reservation" ? "Prenotazione multiprodotto" : modal === "return" ? "Reso o cambio" : modal === "shirt" ? "Maglie Gran Sasso" : "Varie"} onClose={() => setModal(null)}>{modal === "customer" && <NewCustomerForm store={store} reload={reload} onCreated={setCustomer} close={() => setModal(null)} initialName={customerPrefill} />}{modal === "gift" && <GiftForm add={addDraft} close={() => setModal(null)} />}{modal === "varie" && <ServiceForm title="Vendita varie" defaultDescription="Varie" add={addDraft} close={() => setModal(null)} />}{modal === "shirt" && <ServiceForm title="Vendita dedicata Gran Sasso" defaultDescription="Maglie Gran Sasso" add={addDraft} close={() => setModal(null)} />}{modal === "repair" && <DepositForm products={[]} store={store} repair add={addDraft} close={() => setModal(null)} />}{modal === "reservation" && <DepositForm products={data.products} store={store} repair={false} add={addDraft} close={() => setModal(null)} />}{modal === "return" && <ReturnForm store={store} add={addDraft} close={() => setModal(null)} />}</Modal>}
       {saleDone && <Modal title="Vendita registrata" guard={false} onClose={() => setSaleDone(null)}><div className="sale-done"><div className="sale-done-icon"><MaterialIcon>check_circle</MaterialIcon></div><h2>Scontrino {saleDone.receiptNo}</h2><div className="sale-done-total"><span>Totale</span><strong>{money(saleDone.total)}</strong></div>{saleDone.cash != null && <><div className="sale-done-row"><span>Contanti ricevuti</span><b>{money(saleDone.cash)}</b></div><div className="sale-done-change"><span>RESTO</span><strong>{money(saleDone.change)}</strong></div></>}<div className="form-actions"><a className="secondary" href={`/api/pdf?type=receipt&id=${saleDone.id}`} target="_blank" rel="noreferrer">Stampa scontrino interno</a><button className="primary" onClick={() => setSaleDone(null)}>Nuova vendita</button></div></div></Modal>}
     </section>
   );
