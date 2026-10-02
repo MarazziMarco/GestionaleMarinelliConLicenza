@@ -11,6 +11,13 @@
 // Il ponte stampa ogni riga come prezzo unitario (lineTotal / quantita', in
 // centesimi) x quantita': una riga con quantita' > 1 il cui totale non e'
 // divisibile al centesimo viene divisa in due righe, cosi' la somma resta esatta.
+//
+// Reso/cambio: il documento di reso RCH ("=r" con data, chiusura e numero dello
+// scontrino originale) e' stato rifiutato dal registratore (errore E1 il 29/09).
+// Il reso quindi non va alla cassa: lo registra solo il gestionale (magazzino,
+// buono). Alla cassa arriva solo lo scontrino della differenza, con il valore
+// del reso ripartito sulle righe vendita come il buono. Cambio alla pari o con
+// credito al cliente (buono): nessuno scontrino.
 
 export type FiscalItem = {
   description: string;
@@ -24,6 +31,8 @@ export type FiscalItem = {
 export type FiscalLine = FiscalItem & { lineTotal: number };
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
+// Righe che non vanno sullo scontrino: il loro valore scala le righe vendita.
+const NOT_PRINTED = new Set(["gift_redemption", "return"]);
 const DISCOUNTABLE = new Set(["product", "service"]);
 
 function isDiscountable(line: FiscalLine) {
@@ -42,7 +51,7 @@ function splitExact(line: FiscalLine, totalCents: number): FiscalLine[] {
 
 export function buildFiscalLines(items: FiscalItem[], total: number) {
   let lines: FiscalLine[] = items
-    .filter((item) => item.itemType !== "gift_redemption")
+    .filter((item) => !NOT_PRINTED.has(item.itemType))
     .map((item) => ({
       description: item.description,
       quantity: item.quantity,
@@ -53,7 +62,6 @@ export function buildFiscalLines(items: FiscalItem[], total: number) {
       metadata: item.metadata,
     }));
   const subtotal = round2(lines.reduce((sum, line) => sum + line.lineTotal, 0));
-  const hasReturn = lines.some((line) => line.itemType === "return");
 
   const targetCents = Math.round(total * 100);
   const fixedCents = lines.filter((line) => !isDiscountable(line)).reduce((sum, line) => sum + Math.round(line.lineTotal * 100), 0);
@@ -72,8 +80,8 @@ export function buildFiscalLines(items: FiscalItem[], total: number) {
   }
 
   const adjustment = round2(total - lines.reduce((sum, line) => sum + line.lineTotal, 0));
-  // Senza resi un documento da zero euro non si stampa: la RCH non lo chiude
-  // (nessun pagamento) e non c'e' nulla da certificare.
-  const printable = hasReturn || Math.abs(total) > 0.005;
+  // Un documento da zero euro (o in negativo: reso con credito in buono) non si
+  // stampa: la RCH non lo chiude e non c'e' nulla da certificare.
+  const printable = total > 0.005;
   return { lines, subtotal, adjustment, printable };
 }

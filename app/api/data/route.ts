@@ -1092,7 +1092,9 @@ async function createSale(user: SessionUser, body: JsonMap) {
       store,
       createdAt,
       documentType: type,
-      requiresOriginalFiscalReference: type === "exchange",
+      // Il reso non va alla cassa (vedi lib/fiscal-lines.ts): si stampa solo la
+      // differenza, quindi il riferimento allo scontrino originale resta informativo.
+      requiresOriginalFiscalReference: false,
       originalFiscalReference,
       printer: fiscalDevice ? { vendor: fiscalDevice.vendor, model: fiscalDevice.model, connector: fiscalDevice.connector } : null,
       lines: fiscal.lines,
