@@ -1209,12 +1209,31 @@ async function failLocalFiscalJob(user: SessionUser, body: JsonMap) {
   const jobId = Math.round(numberValue(body.jobId));
   const job = await database().prepare(`SELECT id, sale_id AS saleId, store, status FROM fiscal_jobs WHERE id = ?`).bind(jobId).first<{ id: number; saleId: number; store: Store; status: string }>();
   if (!job || (user.role !== "admin" && user.store !== job.store)) return json({ error: "Richiesta fiscale non disponibile per questa cassa." }, 404);
-  if (job.status === "printed") return json({ ok: true, alreadyCompleted: true });
+  if (job.status === "printed" || job.status === "manual") return json({ ok: true, alreadyCompleted: true });
   const message = stringValue(body.error, "Collegamento locale al registratore non disponibile.").slice(0, 500);
   const now = new Date().toISOString();
   await database().prepare(`UPDATE fiscal_jobs SET status = 'error', device_response = ?, updated_at = ? WHERE id = ?`).bind(message, now, job.id).run();
   await database().prepare(`UPDATE sales SET fiscal_status = 'error' WHERE id = ?`).bind(job.saleId).run();
   await database().prepare(`UPDATE fiscal_devices SET last_seen_at = ?, last_status = 'error', last_error = ?, updated_at = ? WHERE store = ?`).bind(now, message, now, job.store).run();
+  return json({ ok: true });
+}
+
+// Scontrino battuto a mano sulla cassa dopo una stampa fallita: la vendita si
+// chiude come certificata e non si puo' piu' ristampare (doppio scontrino).
+async function markFiscalJobManual(user: SessionUser, body: JsonMap) {
+  const jobId = Math.round(numberValue(body.jobId));
+  const job = await database().prepare(`SELECT id, sale_id AS saleId, store, status, claimed_at AS claimedAt FROM fiscal_jobs WHERE id = ?`).bind(jobId).first<{ id: number; saleId: number; store: Store; status: string; claimedAt: string | null }>();
+  if (!job || (user.role !== "admin" && user.store !== job.store)) return json({ error: "Richiesta fiscale non disponibile per questa cassa." }, 404);
+  if (job.status === "manual") return json({ ok: true, alreadyCompleted: true });
+  const staleProcessing = job.status === "processing" && job.claimedAt && Date.now() - new Date(job.claimedAt).getTime() > 120000;
+  if (!["error", "awaiting_setup", "queued"].includes(job.status) && !staleProcessing) return json({ error: "Questo scontrino risulta già stampato o in stampa." }, 409);
+  const now = new Date().toISOString();
+  const note = `Battuto a mano sulla cassa (segnato da ${user.username} il ${new Date(now).toLocaleString("it-IT", { timeZone: "Europe/Rome", dateStyle: "short", timeStyle: "short" })}).`;
+  const updated = await database().prepare(`UPDATE fiscal_jobs SET status = 'manual', device_response = ?, completed_at = ?, updated_at = ? WHERE id = ? AND status = ?`)
+    .bind(note, now, now, job.id, job.status).run();
+  if (!updated.meta?.changes) return json({ error: "Lo stato dello scontrino è cambiato. Aggiorna la pagina." }, 409);
+  await database().prepare(`UPDATE sales SET fiscal_status = 'manual' WHERE id = ?`).bind(job.saleId).run();
+  await logActivity({ user, action: "update", entity: "sale", entityId: job.saleId, detail: "Scontrino battuto a mano sulla cassa", store: job.store });
   return json({ ok: true });
 }
 
@@ -1475,6 +1494,7 @@ async function postImpl(request: Request) {
     if (action === "retryFiscalJob") return retryFiscalJob(auth.user, body);
     if (action === "completeLocalFiscalJob") return completeLocalFiscalJob(auth.user, body);
     if (action === "failLocalFiscalJob") return failLocalFiscalJob(auth.user, body);
+    if (action === "markFiscalJobManual") return markFiscalJobManual(auth.user, body);
     if (action === "resetData") return resetData(auth.user, body);
     if (action === "createUser") return createUser(auth.user, body);
     if (action === "resetUserPassword") return resetUserPassword(auth.user, body);

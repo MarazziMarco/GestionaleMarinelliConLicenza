@@ -608,7 +608,8 @@ td small { margin-top: .16rem; font-size: .62rem; }
 .fiscal-job .fiscal-job-error { color: var(--danger); font-weight: 800; overflow-wrap: anywhere; }
 .fiscal-job .fiscal-job-help { color: var(--ink-soft); line-height: 1.4; overflow-wrap: anywhere; }
 .job-status { padding: .32rem .48rem; border-radius: 999px; background: var(--surface-2); color: var(--ink-soft); font-size: .62rem; font-weight: 850; }
-.job-status.printed { background: var(--success-bg); color: var(--success); }
+.job-status.printed, .job-status.manual { background: var(--success-bg); color: var(--success); }
+.fiscal-job-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .35rem; }
 .job-status.error { background: var(--danger-bg); color: var(--danger); }
 .job-status.queued, .job-status.processing { background: #2a210d; color: #ffd36a; }
 .compact-alert { margin: 0 0 .8rem; font-size: .72rem; overflow-wrap: anywhere; }

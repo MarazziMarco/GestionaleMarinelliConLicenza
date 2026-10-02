@@ -124,7 +124,7 @@ async function postImpl(request: Request) {
     return json({ ok: true });
   }
   if (action === "fail") {
-    if (job.status === "printed") return json({ error: "Lo scontrino risulta già stampato." }, 409);
+    if (job.status === "printed" || job.status === "manual") return json({ error: "Lo scontrino risulta già stampato." }, 409);
     const now = new Date().toISOString();
     const error = textValue(body.error) || "Errore non specificato dal ponte Windows.";
     await database().prepare(`UPDATE fiscal_jobs SET status = 'error', device_response = ?, updated_at = ? WHERE id = ?`).bind(error, now, job.id).run();

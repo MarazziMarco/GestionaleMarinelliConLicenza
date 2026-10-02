@@ -58,7 +58,7 @@ const productLabel = (product: Product) => `${product.brand ? `${product.brand} 
 const customerLabel = (customer: Customer) => customer.customerType === "company" ? customer.companyName : `${customer.firstName} ${customer.lastName}`.trim();
 const keyId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const todayPlusYear = () => new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
-const fiscalJobLabel: Record<string, string> = { awaiting_setup: "Configurazione RT da completare", queued: "Scontrino in coda", processing: "Stampa RT in corso", printed: "Scontrino RT stampato", error: "Errore stampa RT" };
+const fiscalJobLabel: Record<string, string> = { awaiting_setup: "Configurazione RT da completare", queued: "Scontrino in coda", processing: "Stampa RT in corso", printed: "Scontrino RT stampato", manual: "Scontrino battuto a mano", error: "Errore stampa RT" };
 let localFiscalPrintActive = false;
 
 // I comandi RCH li costruisce il ponte Windows dal payload fiscale del server
