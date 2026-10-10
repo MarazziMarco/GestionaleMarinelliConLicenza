@@ -707,7 +707,12 @@ function Start-LocalWebSocketBridge {
   $port = if ($script:Config.LocalWebSocketPort) { [int]$script:Config.LocalWebSocketPort } else { 8080 }
   if ($port -lt 1 -or $port -gt 65535) { throw "Porta WebSocket locale non valida: $port." }
   $prefix = "http://localhost:$port/"
-  $allowedOrigin = ([string]$script:Config.ApiBaseUrl).TrimEnd('/')
+  # Origini ammesse: quella del config (ApiBaseUrl) piu' il dominio fisso di
+  # backup, cosi' il ponte funziona sia col nome vecchio riusato sia col nuovo.
+  $allowedOrigins = @(
+    ([string]$script:Config.ApiBaseUrl).TrimEnd('/')
+    'https://gestionale-marinelli-con-licenza.vercel.app'
+  ) | Where-Object { $_ }
   $listener = New-Object Net.HttpListener
   $listener.Prefixes.Add($prefix)
   $listener.Start()
@@ -718,7 +723,7 @@ function Start-LocalWebSocketBridge {
       $socket = $null
       try {
         $origin = [string]$context.Request.Headers['Origin']
-        if ($origin.TrimEnd('/') -ne $allowedOrigin) {
+        if ($allowedOrigins -notcontains $origin.TrimEnd('/')) {
           $context.Response.StatusCode = 403
           $context.Response.Close()
           continue
