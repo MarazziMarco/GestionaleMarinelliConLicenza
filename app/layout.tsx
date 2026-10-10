@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Manrope } from "next/font/google";
 import "./globals.css";
+import LicenseGate from "./license-gate";
 
 // Il font viene scaricato in fase di build e servito dal nostro dominio: nessuna
 // richiesta ai server Google dal browser (GDPR: niente IP del cliente a Google).
@@ -40,7 +41,7 @@ export default function RootLayout({
         {/* Material Symbols è self-hosted (public/fonts) via @font-face in globals.css: icone garantite anche offline. */}
       </head>
       <body className="antialiased">
-        {children}
+        <LicenseGate>{children}</LicenseGate>
       </body>
     </html>
   );
