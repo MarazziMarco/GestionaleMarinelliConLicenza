@@ -5,6 +5,7 @@ import { createAuthUser, setAuthUserPassword, deleteAuthUser } from "../../../li
 import { computeNextDocumentNumber } from "../../../lib/pricing";
 import { buildFiscalLines, type FiscalItem } from "../../../lib/fiscal-lines";
 import { canonicalCategory, categoryKey, categoryNames } from "../../../lib/categories";
+import { compactCode, isReceiptCode } from "../../../lib/scan-codes";
 
 type JsonMap = Record<string, unknown>;
 type CartItem = {
@@ -150,6 +151,12 @@ async function all<T>(sql: string, ...bindings: unknown[]) {
   return result.results ?? [];
 }
 
+// Il numero scontrino si confronta sempre senza separatori: la pistola li traduce
+// in modo diverso a seconda del layout di tastiera, e gli scontrini gia stampati
+// hanno il trattino nel codice a barre.
+const RECEIPT_MATCH = `REPLACE(UPPER(s.receipt_no), '-', '') = ?`;
+const SALE_BY_CODE_SQL = `SELECT s.id, s.receipt_no AS receiptNo, s.store, s.type, s.subtotal, s.adjustment, s.total, s.cash_amount AS cashAmount, s.card_amount AS cardAmount, s.bank_amount AS bankAmount, s.gift_amount AS giftAmount, s.gift_code_used AS giftCodeUsed, s.created_at AS createdAt, COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, '') AS customerName FROM sales s LEFT JOIN customers c ON c.id = s.customer_id`;
+
 // Numero documento progressivo per anno: FAT 2026/001, PREV 2026/001.
 // Il progressivo riparte ogni anno ed è separato per fatture e preventivi.
 async function nextDocumentNumber(type: string): Promise<string> {
@@ -286,7 +293,7 @@ async function getImpl(request: Request) {
       FROM sale_items si JOIN sales s ON s.id = si.sale_id LEFT JOIN customers c ON c.id = s.customer_id
       WHERE si.product_id = ? AND si.item_type = 'product' AND si.quantity > 0 AND s.store = ?`;
     const soldRows = receipt
-      ? await all<ReturnSaleRow>(`${saleFields} AND s.receipt_no = ? ORDER BY s.created_at DESC LIMIT 20`, product.id, store, receipt)
+      ? await all<ReturnSaleRow>(`${saleFields} AND ${RECEIPT_MATCH} ORDER BY s.created_at DESC LIMIT 20`, product.id, store, compactCode(receipt))
       : await all<ReturnSaleRow>(`${saleFields} ORDER BY s.created_at DESC LIMIT 20`, product.id, store);
     const sold = soldRows.map((row) => {
       const purchasedQty = Math.abs(Number(row.quantity) || 0);
@@ -305,7 +312,7 @@ async function getImpl(request: Request) {
     if (!receipt) return json({ error: "Inserisci il numero dello scontrino originale." }, 400);
     const sale = await database().prepare(`SELECT s.id, s.receipt_no AS receiptNo, s.subtotal, s.total, s.created_at AS createdAt, s.gift_code_used AS originalGiftCode,
       COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, 'Cliente non associato') AS customerName
-      FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE s.receipt_no = ? AND s.store = ?`).bind(receipt, store).first<{ id: number; receiptNo: string; subtotal: number; total: number; createdAt: string; originalGiftCode: string | null; customerName: string }>();
+      FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE ${RECEIPT_MATCH} AND s.store = ?`).bind(compactCode(receipt), store).first<{ id: number; receiptNo: string; subtotal: number; total: number; createdAt: string; originalGiftCode: string | null; customerName: string }>();
     if (!sale) return json({ error: "Scontrino non trovato per questa cassa." }, 404);
     const rows = await all<{ saleItemId: number; productId: number | null; description: string; itemType: string; quantity: number; unitPrice: number; discountPercent: number; lineTotal: number; returnedQty: number }>(`SELECT si.id AS saleItemId, si.product_id AS productId, si.description, si.item_type AS itemType, si.quantity, si.unit_price AS unitPrice, si.discount_percent AS discountPercent, si.line_total AS lineTotal,
       COALESCE((SELECT SUM(ABS(returned.quantity)) FROM sale_items returned WHERE returned.item_type = 'return' AND CAST(json_extract(returned.metadata, '$.originalSaleItemId') AS INTEGER) = si.id), 0) AS returnedQty
@@ -324,12 +331,14 @@ async function getImpl(request: Request) {
   }
   if (view === "code") {
     const code = stringValue(url.searchParams.get("q"));
-    // Codice a barre dello scontrino (VT-… / GS-…): richiama la vendita completa.
-    // Il codice a barre porta solo il riferimento, le righe arrivano da qui.
-    if (/^(VT|GS)-/i.test(code)) {
+    // Codice a barre dello scontrino: richiama la vendita completa. Il codice porta
+    // solo il riferimento, le righe arrivano da qui. Il confronto avviene sulla
+    // forma compatta, perche la pistola traduce i separatori in modo imprevedibile.
+    if (isReceiptCode(code)) {
+      const compact = compactCode(code);
       const sale = auth.user.role === "admin"
-        ? await database().prepare(`SELECT s.id, s.receipt_no AS receiptNo, s.store, s.type, s.subtotal, s.adjustment, s.total, s.cash_amount AS cashAmount, s.card_amount AS cardAmount, s.bank_amount AS bankAmount, s.gift_amount AS giftAmount, s.gift_code_used AS giftCodeUsed, s.created_at AS createdAt, COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, '') AS customerName FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE s.receipt_no = ?`).bind(code).first<{ id: number }>()
-        : await database().prepare(`SELECT s.id, s.receipt_no AS receiptNo, s.store, s.type, s.subtotal, s.adjustment, s.total, s.cash_amount AS cashAmount, s.card_amount AS cardAmount, s.bank_amount AS bankAmount, s.gift_amount AS giftAmount, s.gift_code_used AS giftCodeUsed, s.created_at AS createdAt, COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, '') AS customerName FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE s.receipt_no = ? AND s.store = ?`).bind(code, auth.user.store).first<{ id: number }>();
+        ? await database().prepare(`${SALE_BY_CODE_SQL} WHERE ${RECEIPT_MATCH}`).bind(compact).first<{ id: number }>()
+        : await database().prepare(`${SALE_BY_CODE_SQL} WHERE ${RECEIPT_MATCH} AND s.store = ?`).bind(compact, auth.user.store).first<{ id: number }>();
       if (sale) {
         const items = await all(`SELECT description, quantity, unit_price AS unitPrice, discount_percent AS discountPercent, line_total AS lineTotal, item_type AS itemType FROM sale_items WHERE sale_id = ? ORDER BY id`, sale.id);
         return json({ kind: "sale", record: sale, items });

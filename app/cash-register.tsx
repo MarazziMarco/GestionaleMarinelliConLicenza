@@ -2,7 +2,6 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { effectivePrice, giftRedemptionAmount } from "../lib/pricing";
-import { normalizeScannedCode } from "../lib/scan-codes";
 
 type Store = "Viterbo" | "Gran Sasso";
 type User = { role: "admin" | "viterbo" | "gran_sasso"; store: Store | null };
@@ -478,8 +477,7 @@ export function ReturnForm({ store, add, close }: { store: Store; add: (item: Ca
   async function loadReceipt() {
     setError(""); setSelectedLine(null); setReceiptLines([]);
     try {
-      // Il numero puo arrivare dallo scanner, che scrive il trattino come apostrofo.
-      const result = await readJson(await fetch(`/api/data?view=returnReceipt&store=${encodeURIComponent(store)}&receipt=${encodeURIComponent(normalizeScannedCode(receipt))}`));
+      const result = await readJson(await fetch(`/api/data?view=returnReceipt&store=${encodeURIComponent(store)}&receipt=${encodeURIComponent(receipt)}`));
       setReceiptLines(result.items as ReturnableLine[]);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Scontrino non trovato."); }
   }
@@ -719,9 +717,9 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Buono non riconosciuto."); }
   }
 
-  async function scan(raw: string) {
-    // Lo scanner usa il layout US: sui numeri scontrino il trattino arriva come apostrofo.
-    const code = normalizeScannedCode(raw);
+  // Il codice arriva com'e dalla pistola: i separatori tradotti male dal layout di
+  // tastiera li riconcilia la ricerca lato server.
+  async function scan(code: string) {
     setError(""); setNotice("");
     try {
       const result = await readJson(await fetch(`/api/data?view=code&q=${encodeURIComponent(code)}`));

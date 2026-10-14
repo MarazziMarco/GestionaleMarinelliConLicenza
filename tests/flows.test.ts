@@ -43,8 +43,10 @@ describe("flusso vendita (pglite)", () => {
       items: [{ productId: product.id, description: product.name, quantity: 2, unitPrice: product.price, discountPercent: 0, itemType: "product", metadata: {} }],
     })).json();
 
-    // E' il valore stampato nel codice a barre dello scontrino di cortesia.
-    const found = await (await api.get("code", { q: sold.receiptNo })).json();
+    // E' il valore stampato nel codice a barre dello scontrino di cortesia: sole
+    // lettere e cifre, perche la pistola traduce male i segni di punteggiatura.
+    const printed = sold.receiptNo.replace(/-/g, "");
+    const found = await (await api.get("code", { q: printed })).json();
     expect(found.kind).toBe("sale");
     expect(found.record.receiptNo).toBe(sold.receiptNo);
     expect(round2(found.record.total)).toBe(total);
@@ -53,6 +55,26 @@ describe("flusso vendita (pglite)", () => {
     expect(found.items[0].description).toBe(product.name);
     expect(Number(found.items[0].quantity)).toBe(2);
     expect(round2(found.items[0].unitPrice)).toBe(round2(product.price));
+  });
+
+  it("lo scontrino si ritrova comunque la pistola traduca i separatori", async () => {
+    const before = await bootstrap();
+    const product = before.products.find((p) => p.viterboQty - p.viterboReserved > 0)!;
+    const sold = await (await api.post({
+      action: "createSale", store: "Viterbo", total: product.price, cashAmount: product.price,
+      items: [{ productId: product.id, description: product.name, quantity: 1, unitPrice: product.price, discountPercent: 0, itemType: "product", metadata: {} }],
+    })).json();
+    const digits = sold.receiptNo.replace(/[^0-9]/g, "");
+    const prefix = sold.receiptNo.slice(0, 2);
+
+    // Il trattino arriva come ' : / … a seconda del layout di tastiera di Windows,
+    // e gli scontrini gia stampati hanno il trattino vero nel codice a barre.
+    for (const separator of ["-", "'", ":", "/", "?", "_", "."]) {
+      const scanned = `${prefix}${separator}${digits.slice(0, 12)}${separator}${digits.slice(12)}`;
+      const found = await (await api.get("code", { q: scanned })).json();
+      expect(found.kind, `separatore ${separator}`).toBe("sale");
+      expect(found.record.receiptNo).toBe(sold.receiptNo);
+    }
   });
 
   it("uno scontrino inesistente non viene scambiato per un prodotto", async () => {

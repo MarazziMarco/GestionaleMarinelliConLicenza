@@ -1,4 +1,5 @@
 import { createPdf, euro, type PdfField } from "../../../lib/pdf";
+import { compactCode } from "../../../lib/scan-codes";
 import { withDbScope } from "../../../lib/db";
 import { currentUser, database, ensureDatabase, json } from "../../../lib/runtime-db";
 
@@ -82,8 +83,10 @@ async function getImpl(request: Request) {
           : "Ristampa interna di una vendita gia effettuata.";
     const title = type === "courtesy" ? "Scontrino di cortesia" : type === "fiscal-receipt" ? "Scontrino fiscale" : "Scontrino interno";
     // Code 128 col numero scontrino: scansionandolo la cassa richiama la vendita
-    // intera (righe, sconti, pagamenti), non il solo importo.
-    const saleBarcode = { value: sale.receiptNo, kind: "code128" as const, caption: "SCANSIONARE IN CASSA PER RIVEDERE TUTTA LA TRANSAZIONE" };
+    // intera (righe, sconti, pagamenti), non il solo importo. Si codificano sole
+    // lettere e cifre perche la pistola traduce male i segni di punteggiatura;
+    // sotto le barre resta stampato il numero vero, col trattino.
+    const saleBarcode = { value: compactCode(sale.receiptNo), label: sale.receiptNo, kind: "code128" as const, caption: "SCANSIONARE IN CASSA PER RIVEDERE TUTTA LA TRANSAZIONE" };
     return pdfResponse(createPdf({ title, store: sale.store, note, fields, table, totals, barcode: saleBarcode }), `${type}-${sale.receiptNo}.pdf`);
   }
 

@@ -59,9 +59,11 @@ export type PdfField = { label: string; value: string; full?: boolean };
 export type PdfHighlight = { value: string; caption?: string; rounded?: boolean };
 
 // Codice a barre del documento: EAN-13 (richiamo rapido in cassa) oppure Code 128
-// (testo libero, usato per il prezzo sugli scontrini). Con `printValue: false` si
+// (testo libero, usato per il numero scontrino). Con `printValue: false` si
 // stampano solo le barre, cosi il valore resta leggibile solo con lo scanner.
-type PdfBarcode = { value: string; kind?: "ean13" | "code128"; caption?: string; printValue?: boolean };
+// `label` stampa sotto le barre un testo diverso da quello codificato: serve agli
+// scontrini, dove si codificano sole lettere e cifre ma si legge il numero vero.
+type PdfBarcode = { value: string; kind?: "ean13" | "code128"; caption?: string; printValue?: boolean; label?: string };
 
 type PdfOptions = {
   title: string;
@@ -393,7 +395,7 @@ export function createPdf(options: PdfOptions) {
       commands.push(`${n(startX + index * moduleWidth)} ${BARCODE_BARS_Y} ${n(moduleWidth)} ${guard ? BARCODE_BARS_H + 7 : BARCODE_BARS_H} re f`);
     }
     commands.push(textCenter(barcode.caption ?? "EAN PER RICHIAMO RAPIDO IN CASSA", CENTER, 112, 6.5, false, "0.45", 0.8));
-    if (barcode.printValue !== false) commands.push(textCenter(barcode.value, CENTER, 97, 10, true, "0"));
+    if (barcode.printValue !== false) commands.push(textCenter(barcode.label ?? barcode.value, CENTER, 97, 10, true, "0"));
   }
 
   // Fascia nera di chiusura e riga legale.

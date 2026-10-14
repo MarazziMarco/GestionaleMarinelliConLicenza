@@ -10,7 +10,7 @@ import { emailForUsername } from "../lib/user-profiles";
 import { discountActive, effectivePrice } from "../lib/pricing";
 import { computeReorderRows, computeUnsoldGroups } from "../lib/inventory";
 import { categoryKey, categoryNames } from "../lib/categories";
-import { normalizeScannedCode, isReceiptCode } from "../lib/scan-codes";
+import { isReceiptCode } from "../lib/scan-codes";
 import { isClientTestMode } from "./test-mode-banner";
 
 type Store = "Viterbo" | "Gran Sasso";
@@ -1492,8 +1492,7 @@ export default function Gestionale() {
       last = now;
       if (event.key === "Enter") {
         if (buffer.length >= 6) {
-          // Lo scanner usa il layout US: sui numeri scontrino il trattino arriva come apostrofo.
-          const code = normalizeScannedCode(buffer); buffer = "";
+          const code = buffer.trim(); buffer = "";
           // Codice a barre di uno scontrino: apre la vendita per intero, come in Cassa.
           if (isReceiptCode(code)) { void openScannedSale(code); return; }
           const found = data.products.find((product) => product.eans.split(",").map((value) => value.trim()).includes(code));
