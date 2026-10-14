@@ -916,7 +916,23 @@ td small { margin-top: .16rem; font-size: .62rem; }
 .sale-done-row { display: flex; justify-content: space-between; color: var(--ink-soft); }
 .sale-done-change { display: flex; justify-content: space-between; align-items: baseline; padding: 12px 16px; border-radius: 12px; background: rgba(163,230,53,.14); border: 1px solid var(--lime); }
 .sale-done-change strong { font-size: 2.1rem; color: var(--lime); }
-.sale-done .form-actions { justify-content: center; border-top: none; margin-top: 6px; }
+.sale-done .form-actions { justify-content: center; border-top: none; margin-top: 6px; flex-wrap: wrap; }
+/* Il toggle cortesia nasce nella colonna scura del checkout: nel modal va riportato ai colori chiari. */
+.sale-done .courtesy-toggle { color: var(--ink); justify-content: center; text-align: left; padding-top: 6px; }
+
+/* ===== Transazione richiamata dal codice a barre dello scontrino ===== */
+.scanned-sale { display: flex; flex-direction: column; gap: 12px; }
+.scanned-sale-head { display: flex; flex-wrap: wrap; gap: 18px; }
+.scanned-sale-head div { display: flex; flex-direction: column; }
+.scanned-sale-head span { font-size: .68rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-soft); }
+.scanned-sale-table { width: 100%; border-collapse: collapse; }
+.scanned-sale-table th { text-align: right; font-size: .7rem; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.scanned-sale-table th:first-child, .scanned-sale-table td:first-child { text-align: left; }
+.scanned-sale-table td { text-align: right; padding: 7px 8px; border-bottom: 1px solid var(--line); }
+.scanned-sale-row { display: flex; justify-content: space-between; color: var(--ink-soft); }
+.scanned-sale-total { display: flex; justify-content: space-between; align-items: baseline; font-size: 1.1rem; padding-top: 8px; border-top: 1px solid var(--line); }
+.scanned-sale-total strong { font-size: 1.6rem; }
+.scanned-sale .form-actions { flex-wrap: wrap; }
 
 /* ===== Modal scansione (rinnovato) ===== */
 .scan-card { display: flex; flex-direction: column; gap: 18px; }

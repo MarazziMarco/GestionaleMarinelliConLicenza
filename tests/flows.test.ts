@@ -33,6 +33,33 @@ describe("flusso vendita (pglite)", () => {
     expect(after.sales.length).toBe(before.sales.length + 1);
   });
 
+  it("il codice a barre dello scontrino richiama la transazione intera", async () => {
+    const before = await bootstrap();
+    const product = before.products.find((p) => p.viterboQty - p.viterboReserved >= 2)!;
+    expect(product).toBeTruthy();
+    const total = round2(product.price * 2);
+    const sold = await (await api.post({
+      action: "createSale", store: "Viterbo", total, cashAmount: total,
+      items: [{ productId: product.id, description: product.name, quantity: 2, unitPrice: product.price, discountPercent: 0, itemType: "product", metadata: {} }],
+    })).json();
+
+    // E' il valore stampato nel codice a barre dello scontrino di cortesia.
+    const found = await (await api.get("code", { q: sold.receiptNo })).json();
+    expect(found.kind).toBe("sale");
+    expect(found.record.receiptNo).toBe(sold.receiptNo);
+    expect(round2(found.record.total)).toBe(total);
+    expect(round2(found.record.cashAmount)).toBe(total);
+    expect(found.items).toHaveLength(1);
+    expect(found.items[0].description).toBe(product.name);
+    expect(Number(found.items[0].quantity)).toBe(2);
+    expect(round2(found.items[0].unitPrice)).toBe(round2(product.price));
+  });
+
+  it("uno scontrino inesistente non viene scambiato per un prodotto", async () => {
+    const res = await api.get("code", { q: "VT-000000000000-000" });
+    expect(res.status).toBe(404);
+  });
+
   it("rifiuta se i pagamenti non coprono il totale", async () => {
     const before = await bootstrap();
     const product = before.products.find((p) => p.viterboQty - p.viterboReserved > 0)!;

@@ -74,18 +74,17 @@ async function getImpl(request: Request) {
         ] as const).filter((payment) => payment.value > 0).map((payment) => ({ label: payment.label, value: euro(payment.value) }));
     const totals = hidePrices ? undefined : [...payments, { label: "Totale", value: euro(sale.total), strong: true }];
     const note = hidePrices
-      ? "Prezzi omessi. Presentare questo promemoria al punto vendita: l'importo pagato resta leggibile solo tramite il codice a barre."
+      ? "Prezzi omessi. Presentare questo promemoria al punto vendita: scansionando il codice a barre la cassa rivede la transazione completa."
       : type === "courtesy"
         ? "Documento di cortesia senza valore fiscale."
         : type === "fiscal-receipt"
           ? "Scontrino generato automaticamente per incasso tramite bonifico bancario."
           : "Ristampa interna di una vendita gia effettuata.";
     const title = type === "courtesy" ? "Scontrino di cortesia" : type === "fiscal-receipt" ? "Scontrino fiscale" : "Scontrino interno";
-    // Code 128 col prezzo pagato: scansionandolo la cassa legge l'importo della vendita.
-    const priceBarcode = sale.total > 0
-      ? { value: sale.total.toFixed(2), kind: "code128" as const, caption: hidePrices ? "PREZZO PAGATO - SCANSIONARE PER LEGGERLO" : "PREZZO PAGATO - CODICE A BARRE", printValue: !hidePrices }
-      : null;
-    return pdfResponse(createPdf({ title, store: sale.store, note, fields, table, totals, barcode: priceBarcode }), `${type}-${sale.receiptNo}.pdf`);
+    // Code 128 col numero scontrino: scansionandolo la cassa richiama la vendita
+    // intera (righe, sconti, pagamenti), non il solo importo.
+    const saleBarcode = { value: sale.receiptNo, kind: "code128" as const, caption: "SCANSIONARE IN CASSA PER RIVEDERE TUTTA LA TRANSAZIONE" };
+    return pdfResponse(createPdf({ title, store: sale.store, note, fields, table, totals, barcode: saleBarcode }), `${type}-${sale.receiptNo}.pdf`);
   }
 
   if (type === "gift") {

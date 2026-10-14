@@ -324,6 +324,18 @@ async function getImpl(request: Request) {
   }
   if (view === "code") {
     const code = stringValue(url.searchParams.get("q"));
+    // Codice a barre dello scontrino (VT-… / GS-…): richiama la vendita completa.
+    // Il codice a barre porta solo il riferimento, le righe arrivano da qui.
+    if (/^(VT|GS)-/i.test(code)) {
+      const sale = auth.user.role === "admin"
+        ? await database().prepare(`SELECT s.id, s.receipt_no AS receiptNo, s.store, s.type, s.subtotal, s.adjustment, s.total, s.cash_amount AS cashAmount, s.card_amount AS cardAmount, s.bank_amount AS bankAmount, s.gift_amount AS giftAmount, s.gift_code_used AS giftCodeUsed, s.created_at AS createdAt, COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, '') AS customerName FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE s.receipt_no = ?`).bind(code).first<{ id: number }>()
+        : await database().prepare(`SELECT s.id, s.receipt_no AS receiptNo, s.store, s.type, s.subtotal, s.adjustment, s.total, s.cash_amount AS cashAmount, s.card_amount AS cardAmount, s.bank_amount AS bankAmount, s.gift_amount AS giftAmount, s.gift_code_used AS giftCodeUsed, s.created_at AS createdAt, COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, '') AS customerName FROM sales s LEFT JOIN customers c ON c.id = s.customer_id WHERE s.receipt_no = ? AND s.store = ?`).bind(code, auth.user.store).first<{ id: number }>();
+      if (sale) {
+        const items = await all(`SELECT description, quantity, unit_price AS unitPrice, discount_percent AS discountPercent, line_total AS lineTotal, item_type AS itemType FROM sale_items WHERE sale_id = ? ORDER BY id`, sale.id);
+        return json({ kind: "sale", record: sale, items });
+      }
+      return json({ error: "Scontrino non trovato per questa cassa." }, 404);
+    }
     const gift = auth.user.role === "admin"
       ? await database().prepare(`SELECT code, beneficiary, balance, expires_at AS expiresAt, status FROM gift_cards WHERE code = ? AND status <> 'deleted'`).bind(code).first()
       : await database().prepare(`SELECT code, beneficiary, balance, expires_at AS expiresAt, status FROM gift_cards WHERE code = ? AND store = ? AND status <> 'deleted'`).bind(code, auth.user.store).first();

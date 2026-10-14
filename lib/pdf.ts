@@ -382,8 +382,9 @@ export function createPdf(options: PdfOptions) {
   const isCode128 = barcode?.kind === "code128";
   const bits = barcode ? (isCode128 ? code128Bits(barcode.value) : barcodeBits(barcode.value)) : null;
   if (bits && barcode) {
-    // Modulo ridotto quando il codice e lungo, per lasciare almeno 12 moduli di zona bianca per lato.
-    const moduleWidth = Math.min(1.9, 305 / (bits.length + 24));
+    // Modulo ridotto quando il codice e lungo, per lasciare almeno 12 moduli di zona
+    // bianca per lato: con il numero scontrino il codice resta comunque leggibile.
+    const moduleWidth = Math.min(1.9, 440 / (bits.length + 24));
     const startX = (PAGE_W - bits.length * moduleWidth) / 2;
     commands.push("0 g");
     for (let index = 0; index < bits.length; index += 1) {
