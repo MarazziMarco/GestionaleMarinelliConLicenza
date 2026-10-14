@@ -1,4 +1,4 @@
-import { createPdf, euro } from "../../../lib/pdf";
+import { createPdf, euro, type PdfField } from "../../../lib/pdf";
 import { withDbScope } from "../../../lib/db";
 import { currentUser, database, ensureDatabase, json } from "../../../lib/runtime-db";
 
@@ -16,6 +16,14 @@ function pdfResponse(bytes: Uint8Array, filename: string, disposition: "attachme
       "Cache-Control": "no-store",
     },
   });
+}
+
+function dateTime(value: string) {
+  return value ? new Date(value).toLocaleString("it-IT") : "-";
+}
+
+function dateOnly(value: string) {
+  return value ? new Date(value).toLocaleDateString("it-IT") : "-";
 }
 
 async function getImpl(request: Request) {
@@ -37,27 +45,47 @@ async function getImpl(request: Request) {
     // il prezzo pagato resta leggibile solo scansionando il codice a barre in fondo.
     // Con `prices=1` la cassa puo comunque stamparlo con gli importi in chiaro.
     const hidePrices = type === "courtesy" && url.searchParams.get("prices") !== "1";
-    const lines = [
-      `Negozio: ${sale.store}`,
-      `Data: ${new Date(sale.createdAt).toLocaleString("it-IT")}`,
-      `Cliente: ${sale.customerName}`,
-      `Numero vendita: ${sale.receiptNo}`,
-      "------------------------------------------------------------",
-      ...items.map((item) => `${item.quantity} x ${item.description.slice(0, 46)}${hidePrices ? "" : `\t${euro(item.lineTotal)}`}`),
-      "------------------------------------------------------------",
-      ...(hidePrices ? [] : [
-        `TOTALE\t${euro(sale.total)}`,
-        `Contanti: ${euro(sale.cashAmount)}   Carta: ${euro(sale.cardAmount)}   Bonifico: ${euro(sale.bankAmount)}   Buono: ${euro(sale.giftAmount)}`,
-      ]),
-      hidePrices ? "Documento di cortesia: prezzo pagato leggibile solo tramite il codice a barre." : type === "courtesy" ? "Documento di cortesia senza indicazione dei prezzi fiscali." : type === "fiscal-receipt" ? "Scontrino generato automaticamente per incasso tramite bonifico bancario." : "Ristampa interna di una vendita gia effettuata.",
+    const fields: PdfField[] = [
+      { label: "Rif. acquisto", value: sale.receiptNo },
+      { label: "Data", value: dateTime(sale.createdAt) },
+      { label: "Cliente", value: sale.customerName },
+      { label: "Punto vendita", value: sale.store },
     ];
+    const table = hidePrices
+      ? {
+          headers: ["Articolo", "Quantita"],
+          x: [60, 535],
+          align: ["l", "r"] as ("l" | "r")[],
+          rows: items.map((item) => [item.description, String(item.quantity)]),
+        }
+      : {
+          headers: ["Articolo", "Qta", "Prezzo", "Totale"],
+          x: [60, 400, 465, 535],
+          align: ["l", "r", "r", "r"] as ("l" | "r")[],
+          rows: items.map((item) => [item.description, String(item.quantity), euro(item.unitPrice), euro(item.lineTotal)]),
+        };
+    const payments = hidePrices
+      ? []
+      : ([
+          { label: "Contanti", value: sale.cashAmount },
+          { label: "Carta", value: sale.cardAmount },
+          { label: "Bonifico", value: sale.bankAmount },
+          { label: "Buono regalo", value: sale.giftAmount },
+        ] as const).filter((payment) => payment.value > 0).map((payment) => ({ label: payment.label, value: euro(payment.value) }));
+    const totals = hidePrices ? undefined : [...payments, { label: "Totale", value: euro(sale.total), strong: true }];
+    const note = hidePrices
+      ? "Prezzi omessi. Presentare questo promemoria al punto vendita: l'importo pagato resta leggibile solo tramite il codice a barre."
+      : type === "courtesy"
+        ? "Documento di cortesia senza valore fiscale."
+        : type === "fiscal-receipt"
+          ? "Scontrino generato automaticamente per incasso tramite bonifico bancario."
+          : "Ristampa interna di una vendita gia effettuata.";
     const title = type === "courtesy" ? "Scontrino di cortesia" : type === "fiscal-receipt" ? "Scontrino fiscale" : "Scontrino interno";
-    const subtitle = type === "fiscal-receipt" ? "Pagamento tramite bonifico bancario" : "Copia non fiscale";
     // Code 128 col prezzo pagato: scansionandolo la cassa legge l'importo della vendita.
     const priceBarcode = sale.total > 0
       ? { value: sale.total.toFixed(2), kind: "code128" as const, caption: hidePrices ? "PREZZO PAGATO - SCANSIONARE PER LEGGERLO" : "PREZZO PAGATO - CODICE A BARRE", printValue: !hidePrices }
       : null;
-    return pdfResponse(createPdf({ title, subtitle, lines, barcode: priceBarcode }), `${type}-${sale.receiptNo}.pdf`);
+    return pdfResponse(createPdf({ title, store: sale.store, note, fields, table, totals, barcode: priceBarcode }), `${type}-${sale.receiptNo}.pdf`);
   }
 
   if (type === "gift") {
@@ -66,25 +94,58 @@ async function getImpl(request: Request) {
     if (user.role !== "admin" && gift.store !== user.store) return json({ error: "Documento non disponibile per questa cassa." }, 403);
     return pdfResponse(createPdf({
       title: "Buono regalo",
-      lines: [`Valore: ${euro(gift.initialValue)}`, `Intestatario: ${gift.beneficiary}`, `Scadenza: ${gift.expiresAt ? new Date(gift.expiresAt).toLocaleDateString("it-IT") : "Nessuna"}`, `Emesso da: ${gift.store}`, `Saldo attuale: ${euro(gift.balance)}`, "Presentare il codice alla cassa."],
-      barcode: gift.code,
+      store: gift.store,
+      note: "UN REGALO PER LA TUA PROSSIMA AVVENTURA",
+      noteAlign: "center",
+      highlight: { caption: "Valore del buono", value: euro(gift.initialValue), rounded: true },
+      fields: [
+        { label: "Destinatario", value: gift.beneficiary, full: true },
+        { label: "Codice buono", value: gift.code },
+        { label: "Emissione", value: dateOnly(gift.createdAt) },
+        { label: "Valido fino al", value: gift.expiresAt ? dateOnly(gift.expiresAt) : "Nessuna scadenza" },
+        { label: "Saldo attuale", value: euro(gift.balance) },
+        { label: "Emesso da", value: gift.store, full: true },
+      ],
+      barcode: { value: gift.code, caption: "CODICE BUONO - PRESENTARE ALLA CASSA" },
     }), `buono-${gift.code}.pdf`);
   }
 
   if (type === "reservation") {
-    const reservation = await database().prepare(`SELECT r.id, r.code, r.store, r.description, r.kind, r.total_price AS totalPrice, r.deposit_amount AS depositAmount, r.balance_due AS balanceDue, r.status, r.created_at AS createdAt, COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, 'Cliente non associato') AS customerName, COALESCE(c.phone, '') AS customerPhone FROM reservations r LEFT JOIN customers c ON c.id = r.customer_id WHERE r.id = ?`).bind(id).first<{ id: number; code: string; store: string; description: string; kind: string; totalPrice: number; depositAmount: number; balanceDue: number; status: string; createdAt: string; customerName: string; customerPhone: string }>();
+    const reservation = await database().prepare(`SELECT r.id, r.code, r.store, r.description, r.kind, r.total_price AS totalPrice, r.deposit_amount AS depositAmount, r.balance_due AS balanceDue, r.status, r.expected_delivery AS expectedDelivery, r.created_at AS createdAt, COALESCE(CASE WHEN c.customer_type = 'company' THEN c.company_name ELSE TRIM(c.first_name || ' ' || c.last_name) END, 'Cliente non associato') AS customerName, COALESCE(c.phone, '') AS customerPhone FROM reservations r LEFT JOIN customers c ON c.id = r.customer_id WHERE r.id = ?`).bind(id).first<{ id: number; code: string; store: string; description: string; kind: string; totalPrice: number; depositAmount: number; balanceDue: number; status: string; expectedDelivery: string; createdAt: string; customerName: string; customerPhone: string }>();
     if (!reservation) return json({ error: "Prenotazione non trovata." }, 404);
     if (user.role !== "admin" && reservation.store !== user.store) return json({ error: "Documento non disponibile per questa cassa." }, 403);
     const items = await all<{ description: string; quantity: number; unitPrice: number; discountPercent: number }>(`SELECT description, quantity, unit_price AS unitPrice, discount_percent AS discountPercent FROM reservation_items WHERE reservation_id = ? ORDER BY id`, reservation.id);
-    const productLines = items.length
-      ? [reservation.kind === "repair" ? "Prodotti da risuolare:" : "Prodotti prenotati:", ...items.map((item) => `${item.quantity} x ${item.description.slice(0, 38)} - ${euro(item.unitPrice)} cad.${item.discountPercent > 0 ? ` - Sc. ${item.discountPercent}%` : ""} - ${euro(item.quantity * item.unitPrice * (1 - item.discountPercent / 100))}`)]
-      : [`Descrizione: ${reservation.description}`];
+    const repair = reservation.kind === "repair";
+    const fields: PdfField[] = [
+      { label: repair ? "Rif. lavorazione" : "Rif. pratica", value: reservation.code },
+      { label: "Cliente", value: `${reservation.customerName}${reservation.customerPhone ? ` - ${reservation.customerPhone}` : ""}` },
+    ];
+    if (!items.length) fields.push({ label: repair ? "Calzatura" : "Articolo", value: reservation.description, full: true });
+    fields.push(
+      { label: repair ? "Presa in carico" : "Data pratica", value: dateOnly(reservation.createdAt) },
+      { label: repair ? "Consegna prevista" : "Ritiro previsto", value: reservation.expectedDelivery ? dateOnly(reservation.expectedDelivery) : "Da concordare" },
+      { label: repair ? "Preventivo" : "Prezzo totale", value: euro(reservation.totalPrice) },
+      { label: "Acconto ricevuto", value: euro(reservation.depositAmount) },
+      { label: "Stato", value: reservation.status },
+      { label: "Punto vendita", value: reservation.store },
+    );
+    const table = items.length
+      ? {
+          headers: [repair ? "Lavorazione" : "Articolo", "Qta", "Prezzo", "Sconto", "Totale"],
+          x: [60, 372, 428, 476, 535],
+          align: ["l", "r", "r", "r", "r"] as ("l" | "r")[],
+          rows: items.map((item) => [item.description, String(item.quantity), euro(item.unitPrice), item.discountPercent > 0 ? `${item.discountPercent}%` : "-", euro(item.quantity * item.unitPrice * (1 - item.discountPercent / 100))]),
+        }
+      : undefined;
     return pdfResponse(createPdf({
-      title: reservation.kind === "repair" ? "Scheda risuolatura" : "Prenotazione multiprodotto",
-      subtitle: "Documento operativo con richiamo EAN",
-      lines: [`Codice operazione: ${reservation.code}`, `Data: ${new Date(reservation.createdAt).toLocaleString("it-IT")}`, `Cliente: ${reservation.customerName}${reservation.customerPhone ? ` · ${reservation.customerPhone}` : ""}`, `Negozio: ${reservation.store}`, ...productLines, "------------------------------------------------------------", `Totale concordato: ${euro(reservation.totalPrice)}`, `Acconto versato: ${euro(reservation.depositAmount)}`, `SALDO AL RITIRO: ${euro(reservation.balanceDue)}`, `Stato: ${reservation.status}`, "Scansionare questo EAN in Cassa per richiamare e saldare l'operazione."],
-      barcode: reservation.code,
-    }), `${reservation.kind === "repair" ? "risuolatura" : "prenotazione"}-${reservation.code}.pdf`);
+      title: repair ? "Ricevuta risuolatura" : "Prenotazione con acconto",
+      store: reservation.store,
+      note: repair ? "Lavorazione soggetta alla verifica tecnica del laboratorio." : "Promemoria della pratica: presentare questo documento al ritiro.",
+      highlight: { value: `${repair ? "SALDO PREVISTO" : "SALDO RESIDUO"} - ${euro(reservation.balanceDue)}` },
+      fields,
+      table,
+      barcode: { value: reservation.code, caption: "SCANSIONARE IN CASSA PER RICHIAMARE E SALDARE" },
+    }), `${repair ? "risuolatura" : "prenotazione"}-${reservation.code}.pdf`);
   }
 
   if (type === "ddt") {
@@ -92,8 +153,28 @@ async function getImpl(request: Request) {
     if (!transfer) return json({ error: "Trasferimento non trovato." }, 404);
     if (user.role !== "admin" && transfer.fromStore !== user.store) return json({ error: "Documento non disponibile per questa cassa." }, 403);
     const items = await all<{ sku: string; name: string; color: string; size: string; quantity: number }>(`SELECT p.sku, p.name, p.color, p.size, ti.quantity FROM transfer_items ti JOIN products p ON p.id = ti.product_id WHERE ti.transfer_id = ?`, id);
-    const lines = [`Numero DDT: ${transfer.code}`, `Data: ${new Date(transfer.createdAt).toLocaleString("it-IT")}`, `Mittente: ${transfer.sender}`, `Ricevente: ${transfer.receiver}`, `Vettore: ${transfer.carrier}`, `Causale: ${transfer.transportReason}`, `Da ${transfer.fromStore} a ${transfer.toStore}`, "------------------------------------------------------------", ...items.map((item) => `${item.quantity} x ${item.sku} - ${item.name} ${item.color ?? ""} ${item.size ?? ""}`)];
-    return pdfResponse(createPdf({ title: "Documento di trasporto", lines }), `DDT-${transfer.code}.pdf`);
+    return pdfResponse(createPdf({
+      title: "Documento di trasporto",
+      store: transfer.fromStore,
+      note: "Trasferimento merce fra punti vendita.",
+      fields: [
+        { label: "Numero DDT", value: transfer.code },
+        { label: "Data", value: dateTime(transfer.createdAt) },
+        { label: "Mittente", value: transfer.sender || transfer.fromStore },
+        { label: "Ricevente", value: transfer.receiver || transfer.toStore },
+        { label: "Vettore", value: transfer.carrier || "Mezzo proprio" },
+        { label: "Causale", value: transfer.transportReason },
+        { label: "Da", value: transfer.fromStore },
+        { label: "A", value: transfer.toStore },
+      ],
+      table: {
+        headers: ["Codice", "Articolo", "Quantita"],
+        x: [60, 180, 535],
+        align: ["l", "l", "r"] as ("l" | "r")[],
+        rows: items.map((item) => [item.sku, `${item.name} ${item.color ?? ""} ${item.size ?? ""}`.trim(), String(item.quantity)]),
+      },
+      footer: "DOCUMENTO DI TRASPORTO - COPIA NON FISCALE",
+    }), `DDT-${transfer.code}.pdf`);
   }
 
   if (type === "document") {
@@ -102,35 +183,41 @@ async function getImpl(request: Request) {
     if (!document) return json({ error: "Documento non trovato." }, 404);
     const items = await all<{ description: string; quantity: number; unitPrice: number; lineTotal: number; taxRate: number; taxAmount: number; grossTotal: number }>(`SELECT description, quantity, unit_price AS unitPrice, line_total AS lineTotal, tax_rate AS taxRate, tax_amount AS taxAmount, gross_total AS grossTotal FROM business_document_items WHERE document_id = ? ORDER BY id`, id);
     const location = [document.recipientPostalCode, document.recipientCity, document.recipientProvince].filter(Boolean).join(" ");
-    const recipientLines = [
-      `Destinatario: ${document.recipient}`,
-      document.recipientVatNumber ? `P.IVA destinatario: ${document.recipientVatNumber}` : "",
-      document.recipientAddress ? `Indirizzo: ${document.recipientAddress}${location ? ` - ${location}` : ""}` : (location ? `Localita: ${location}` : ""),
-      document.recipientPec ? `PEC: ${document.recipientPec}` : "",
-      document.recipientSdiCode ? `Codice SDI: ${document.recipientSdiCode}` : "",
-    ].filter(Boolean);
-    const lines = [
-      `Numero: ${document.number}`,
-      `Data: ${new Date(document.createdAt).toLocaleDateString("it-IT")}`,
-      ...recipientLines,
-      `Origine merce: ${document.origin}`,
-      `Pagamento: ${document.paymentMethod === "bank" ? "Bonifico bancario" : document.paymentMethod === "card" ? "Carta" : "Contanti"}`,
-      "------------------------------------------------------------",
-      "ARTICOLI - PREZZI UNITARI E IMPONIBILI IVA ESCLUSA",
+    const invoice = document.type === "invoice";
+    const fields: PdfField[] = [
+      { label: invoice ? "Numero fattura" : "Numero preventivo", value: document.number },
+      { label: "Data", value: dateOnly(document.createdAt) },
+      { label: "Destinatario", value: document.recipient, full: true },
     ];
+    if (document.recipientVatNumber) fields.push({ label: "P.IVA destinatario", value: document.recipientVatNumber });
+    if (document.recipientSdiCode) fields.push({ label: "Codice SDI", value: document.recipientSdiCode });
+    const address = [document.recipientAddress, location].filter(Boolean).join(" - ");
+    if (address) fields.push({ label: "Indirizzo", value: address, full: true });
+    if (document.recipientPec) fields.push({ label: "PEC", value: document.recipientPec });
+    fields.push(
+      { label: "Pagamento", value: document.paymentMethod === "bank" ? "Bonifico bancario" : document.paymentMethod === "card" ? "Carta" : "Contanti" },
+      { label: "Origine merce", value: document.origin, full: true },
+    );
     const table = {
       headers: ["Descrizione", "Qta", "Prezzo", "IVA%", "Totale"],
-      x: [51, 372, 432, 478, 545],
+      x: [60, 372, 428, 476, 535],
       align: ["l", "r", "r", "r", "r"] as ("l" | "r")[],
       rows: items.map((item) => [item.description, String(item.quantity), euro(item.unitPrice), `${item.taxRate}%`, euro(item.grossTotal)]),
     };
     const totals = [
       { label: "Imponibile", value: euro(document.netTotal) },
       { label: "IVA", value: euro(document.taxTotal) },
-      { label: "TOTALE DOCUMENTO", value: euro(document.total), strong: true },
+      { label: "Totale documento", value: euro(document.total), strong: true },
     ];
     const disposition = url.searchParams.get("inline") === "1" ? "inline" : "attachment";
-    return pdfResponse(createPdf({ title: document.type === "invoice" ? "Fattura" : "Preventivo", subtitle: document.number, lines, table, totals }), `${document.number}.pdf`, disposition);
+    return pdfResponse(createPdf({
+      title: invoice ? "Fattura" : "Preventivo",
+      note: "Prezzi unitari e imponibili indicati IVA esclusa.",
+      fields,
+      table,
+      totals,
+      footer: invoice ? "DOCUMENTO FISCALE" : "PREVENTIVO - DOCUMENTO NON FISCALE",
+    }), `${document.number}.pdf`, disposition);
   }
   return json({ error: "Tipo di documento non disponibile." }, 404);
 }

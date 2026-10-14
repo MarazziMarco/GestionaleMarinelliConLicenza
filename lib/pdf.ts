@@ -1,4 +1,46 @@
-import { LOGO_JPEG_BASE64, LOGO_JPEG_WIDTH, LOGO_JPEG_HEIGHT } from "./logo-data";
+import { SIRIO_LOGO, RRTREK_LOGO, type BrandLogo } from "./brand-logos";
+
+// --- Identita dei punti vendita -------------------------------------------------
+// Ogni documento esce con il marchio del negozio che lo ha emesso:
+// Sirio per Viterbo, RR Trek Gran Sasso per Gran Sasso.
+type Brand = { logo: BrandLogo; contacts: string[] };
+
+const SIRIO: Brand = {
+  logo: SIRIO_LOGO,
+  contacts: ["Strada Cassia Nord km 85+800, Viterbo", "Tel. 0761 411322"],
+};
+
+const RRTREK: Brand = {
+  logo: RRTREK_LOGO,
+  contacts: ["CONTATTI DEL PUNTO VENDITA DA CONFERMARE"],
+};
+
+export function brandForStore(store?: string): Brand {
+  return /gran\s*sasso/i.test(store ?? "") ? RRTREK : SIRIO;
+}
+
+const LEGAL_LINE = "Marinelli Stefano - P.IVA 02504600566";
+
+// --- Geometria del foglio A4 ----------------------------------------------------
+const PAGE_W = 595; // 210 mm
+const PAGE_H = 842; // 297 mm
+const LEFT = 52;
+const RIGHT = 543;
+const WIDTH = RIGHT - LEFT;
+const CENTER = (LEFT + RIGHT) / 2;
+const COL_GAP = 19;
+const COL_W = (WIDTH - COL_GAP) / 2;
+const COL_X = [LEFT, LEFT + COL_W + COL_GAP];
+const FIELD_H = 44;
+
+// Il blocco in fondo alla pagina (codice a barre, fascia nera, riga legale) e fisso:
+// il contenuto si ferma sopra questi limiti.
+const FOOTER_BAR_Y = 56;
+const FOOTER_BAR_H = 26;
+const BARCODE_BARS_Y = 126;
+const BARCODE_BARS_H = 56;
+const CONTENT_FLOOR_WITH_BARCODE = 200;
+const CONTENT_FLOOR_PLAIN = 96;
 
 type PdfTable = {
   headers: string[];
@@ -9,6 +51,13 @@ type PdfTable = {
 
 type PdfTotal = { label: string; value: string; strong?: boolean };
 
+// Campo della griglia: etichetta minuscola in alto, valore sotto, filetto di chiusura.
+// Con `full: true` occupa l'intera larghezza invece di mezza colonna.
+export type PdfField = { label: string; value: string; full?: boolean };
+
+// Riquadro con l'importo in evidenza (valore del buono, saldo residuo, ...).
+export type PdfHighlight = { value: string; caption?: string; rounded?: boolean };
+
 // Codice a barre del documento: EAN-13 (richiamo rapido in cassa) oppure Code 128
 // (testo libero, usato per il prezzo sugli scontrini). Con `printValue: false` si
 // stampano solo le barre, cosi il valore resta leggibile solo con lo scanner.
@@ -16,11 +65,16 @@ type PdfBarcode = { value: string; kind?: "ean13" | "code128"; caption?: string;
 
 type PdfOptions = {
   title: string;
-  subtitle?: string;
-  lines: string[];
+  store?: string;
+  note?: string; // riga di cortesia sotto la fascia del titolo
+  noteAlign?: "left" | "center";
+  highlight?: PdfHighlight | null;
+  fields?: PdfField[];
+  lines?: string[];
   barcode?: string | PdfBarcode | null;
   table?: PdfTable;
   totals?: PdfTotal[];
+  footer?: string; // testo della fascia nera in fondo
 };
 
 const eanL = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", "0101111", "0111011", "0110111", "0001011"];
@@ -46,10 +100,10 @@ const code128Patterns = [
 // Larghezze Helvetica (unità/1000) per allineare a destra i prezzi.
 const helvWidths: Record<string, number> = { " ": 278, "!": 278, "\"": 355, "#": 556, "$": 556, "%": 889, "&": 667, "'": 191, "(": 333, ")": 333, "*": 389, "+": 584, ",": 278, "-": 333, ".": 278, "/": 278, "0": 556, "1": 556, "2": 556, "3": 556, "4": 556, "5": 556, "6": 556, "7": 556, "8": 556, "9": 556, ":": 278, ";": 278, "<": 584, "=": 584, ">": 584, "?": 556, "@": 1015, A: 667, B: 667, C: 722, D: 722, E: 667, F: 611, G: 778, H: 722, I: 278, J: 500, K: 667, L: 556, M: 833, N: 722, O: 778, P: 667, Q: 778, R: 722, S: 667, T: 611, U: 722, V: 667, W: 944, X: 667, Y: 667, Z: 611, "[": 278, "\\": 278, "]": 278, "^": 469, _: 556, "`": 333, a: 556, b: 556, c: 500, d: 556, e: 556, f: 278, g: 556, h: 556, i: 222, j: 222, k: 500, l: 222, m: 833, n: 556, o: 556, p: 556, q: 556, r: 333, s: 500, t: 278, u: 556, v: 500, w: 722, x: 500, y: 500, z: 500, "{": 334, "|": 260, "}": 334, "~": 584 };
 
-function textWidth(value: string, size: number) {
+function textWidth(value: string, size: number, tracking = 0) {
   let units = 0;
   for (const char of value) units += helvWidths[char] ?? 556;
-  return units / 1000 * size;
+  return units / 1000 * size + tracking * Math.max(value.length - 1, 0);
 }
 
 function ascii(value: string) {
@@ -58,6 +112,11 @@ function ascii(value: string) {
 
 function escapePdf(value: string) {
   return ascii(value).replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
+}
+
+// Arrotonda le coordinate: evita code stream pieni di decimali inutili.
+function n(value: number) {
+  return Number(value.toFixed(2));
 }
 
 function barcodeBits(code: string) {
@@ -94,141 +153,257 @@ export function code128Bits(value: string) {
   return bits;
 }
 
-function textCommand(value: string, x: number, y: number, size: number, bold = false, gray = "0") {
-  return `${gray} g BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${y} Td (${escapePdf(value)}) Tj ET`;
+function textCommand(value: string, x: number, y: number, size: number, bold = false, gray = "0", tracking = 0) {
+  return `${gray} g BT /${bold ? "F2" : "F1"} ${size} Tf ${n(tracking)} Tc ${n(x)} ${n(y)} Td (${escapePdf(value)}) Tj ET 0 Tc`;
 }
 
 // Testo allineato a destra: il bordo destro finisce in `right`.
-function textRight(value: string, right: number, y: number, size: number, bold = false, gray = "0") {
-  const x = right - textWidth(ascii(value), size);
-  return textCommand(value, x, y, size, bold, gray);
+function textRight(value: string, right: number, y: number, size: number, bold = false, gray = "0", tracking = 0) {
+  return textCommand(value, right - textWidth(ascii(value), size, tracking), y, size, bold, gray, tracking);
 }
 
 // Testo centrato attorno all'ascissa `center`.
-function textCenter(value: string, center: number, y: number, size: number, bold = false, gray = "0") {
-  return textCommand(value, center - textWidth(ascii(value), size) / 2, y, size, bold, gray);
+function textCenter(value: string, center: number, y: number, size: number, bold = false, gray = "0", tracking = 0) {
+  return textCommand(value, center - textWidth(ascii(value), size, tracking) / 2, y, size, bold, gray, tracking);
+}
+
+// Tronca il testo alla larghezza disponibile invece di tagliarlo a un numero fisso di caratteri.
+function fit(value: string, maxWidth: number, size: number) {
+  const text = ascii(value);
+  if (textWidth(text, size) <= maxWidth) return text;
+  let cut = text;
+  while (cut.length > 1 && textWidth(`${cut}...`, size) > maxWidth) cut = cut.slice(0, -1);
+  return `${cut}...`;
+}
+
+function ellipsePath(cx: number, cy: number, rx: number, ry: number) {
+  const k = 0.5523;
+  return [
+    `${n(cx - rx)} ${n(cy)} m`,
+    `${n(cx - rx)} ${n(cy + ry * k)} ${n(cx - rx * k)} ${n(cy + ry)} ${n(cx)} ${n(cy + ry)} c`,
+    `${n(cx + rx * k)} ${n(cy + ry)} ${n(cx + rx)} ${n(cy + ry * k)} ${n(cx + rx)} ${n(cy)} c`,
+    `${n(cx + rx)} ${n(cy - ry * k)} ${n(cx + rx * k)} ${n(cy - ry)} ${n(cx)} ${n(cy - ry)} c`,
+    `${n(cx - rx * k)} ${n(cy - ry)} ${n(cx - rx)} ${n(cy - ry * k)} ${n(cx - rx)} ${n(cy)} c S`,
+  ].join(" ");
+}
+
+function roundRectPath(x: number, y: number, w: number, h: number, r: number) {
+  const k = 0.5523 * r;
+  return [
+    `${n(x + r)} ${n(y)} m`,
+    `${n(x + w - r)} ${n(y)} l`,
+    `${n(x + w - r + k)} ${n(y)} ${n(x + w)} ${n(y + r - k)} ${n(x + w)} ${n(y + r)} c`,
+    `${n(x + w)} ${n(y + h - r)} l`,
+    `${n(x + w)} ${n(y + h - r + k)} ${n(x + w - r + k)} ${n(y + h)} ${n(x + w - r)} ${n(y + h)} c`,
+    `${n(x + r)} ${n(y + h)} l`,
+    `${n(x + r - k)} ${n(y + h)} ${n(x)} ${n(y + h - r + k)} ${n(x)} ${n(y + h - r)} c`,
+    `${n(x)} ${n(y + r)} l`,
+    `${n(x)} ${n(y + r - k)} ${n(x + r - k)} ${n(y)} ${n(x + r)} ${n(y)} c`,
+  ].join(" ");
+}
+
+// Filigrana: curve di livello e creste di montagna appena accennate, come nei fac-simile.
+function watermark() {
+  const out = ["q 0.925 G 0.7 w"];
+  for (let index = 0; index < 7; index += 1) {
+    const radius = 48 + index * 30;
+    out.push(ellipsePath(28, 232, radius * 0.72, radius));
+  }
+  for (let index = 0; index < 6; index += 1) {
+    const radius = 42 + index * 26;
+    out.push(ellipsePath(575, 648, radius * 0.66, radius));
+  }
+  out.push("0.945 G 1 w");
+  for (let index = 0; index < 4; index += 1) {
+    const drop = index * 16;
+    out.push(`${n(300 - drop)} ${n(118 + drop)} m ${n(372 - drop)} ${n(206 + drop)} l ${n(412 - drop)} ${n(166 + drop)} l ${n(500 - drop)} ${n(252 + drop)} l ${n(560)} ${n(196 + drop)} l S`);
+  }
+  out.push("Q");
+  return out;
 }
 
 export function createPdf(options: PdfOptions) {
-  const commands: string[] = [
-    "q 0 g 0 724 595 118 re f Q",
-    // Logo aziendale (immagine) nell'intestazione scura.
-    "q 60 0 0 60 34 752 cm /Im0 Do Q",
-    textCommand("MARINELLI STEFANO", 108, 788, 19, true, "1"),
-    textCommand("P.IVA 02504600566", 108, 769, 10, false, "1"),
-    textCommand("STRADA CASSIA NORD KM 85+800", 108, 753, 10, false, "1"),
-    "q 1 g 0 G 1.2 w 35 667 525 42 re B Q",
-    textCommand(options.title, 48, 682, 20, true, "0"),
-  ];
-  if (options.subtitle) commands.push(textRight(options.subtitle, 547, 684, 9, false, "0.28"));
+  const brand = brandForStore(options.store);
+  const commands: string[] = [...watermark()];
 
-  const hasTable = Boolean(options.table);
-  const visibleLines = options.lines.slice(0, 42);
-  const lowerBoundary = options.barcode ? 186 : 58;
-  const lineHeight = hasTable ? 15 : Math.max(11, Math.min(17, (646 - lowerBoundary) / Math.max(visibleLines.length, 1)));
-  let y = 646;
-  visibleLines.forEach((line, index) => {
-    if (line.startsWith("---")) {
-      commands.push(`0.55 G 48 ${y + 4} m 547 ${y + 4} l S`);
-      y -= Math.max(8, lineHeight * .65);
-      return;
-    }
-    const totalLine = /^(TOTALE|SALDO|IMPORTO DA PAGARE)/i.test(line);
-    if (totalLine) {
-      commands.push(`q 0 g 42 ${y - 4} 511 ${lineHeight} re f Q`);
-      const size = Math.min(11, lineHeight - 2);
-      const [left, right] = line.split("\t");
-      commands.push(textCommand((left ?? line).slice(0, 92), 51, y, size, true, "1"));
-      if (right !== undefined) commands.push(textRight(right, 545, y, size, true, "1"));
+  // Intestazione: logo del punto vendita centrato e recapiti sotto.
+  const logoMaxW = 160;
+  const logoMaxH = 74;
+  const logoScale = Math.min(logoMaxW / brand.logo.width, logoMaxH / brand.logo.height);
+  const logoW = brand.logo.width * logoScale;
+  const logoH = brand.logo.height * logoScale;
+  const logoTop = 822;
+  commands.push(`q ${n(logoW)} 0 0 ${n(logoH)} ${n(CENTER - logoW / 2)} ${n(logoTop - logoH)} cm /Im0 Do Q`);
+
+  let headerY = logoTop - logoH - 16;
+  for (const contact of brand.contacts) {
+    commands.push(textCenter(contact, CENTER, headerY, 9, false, "0.2"));
+    headerY -= 12;
+  }
+
+  // Fascia nera con il titolo del documento.
+  const titleBarH = 30;
+  const titleBarY = headerY - 8 - titleBarH;
+  commands.push(`q 0 g ${LEFT} ${n(titleBarY)} ${WIDTH} ${titleBarH} re f Q`);
+  commands.push(textCenter(options.title.toUpperCase(), CENTER, titleBarY + 10, 15, false, "1", 1.1));
+
+  let y = titleBarY;
+  if (options.note) {
+    y -= 16;
+    const note = fit(options.note, WIDTH, 7.5);
+    commands.push(options.noteAlign === "center"
+      ? textCenter(note, CENTER, y, 7.5, false, "0.3", 0.6)
+      : textCommand(note, LEFT, y, 7.5, false, "0.3"));
+    y -= 18;
+  } else {
+    y -= 22;
+  }
+
+  // Riquadro dell'importo in evidenza.
+  if (options.highlight) {
+    const boxH = options.highlight.caption ? 54 : 40;
+    const boxY = y - boxH;
+    if (options.highlight.rounded) commands.push(`q 0 G 1.2 w ${roundRectPath(LEFT, boxY, WIDTH, boxH, 12)} S Q`);
+    else commands.push(`q 0 G 1.2 w ${LEFT} ${n(boxY)} ${WIDTH} ${boxH} re S Q`);
+    if (options.highlight.caption) {
+      commands.push(textCenter(options.highlight.caption.toUpperCase(), CENTER, boxY + boxH - 16, 7.5, false, "0.3", 0.8));
+      commands.push(textCenter(options.highlight.value, CENTER, boxY + 12, 18, false, "0"));
     } else {
-      if (index % 2 === 1) commands.push(`q 0.94 g 42 ${y - 4} 511 ${lineHeight} re f Q`);
-      const size = Math.min(10, lineHeight - 1);
-      const [left, right] = line.split("\t");
-      const emphasized = /^(Numero|Codice|Cliente|Data|Negozio|Valore|Acconto|Totale concordato|Prodotti prenotati|Prodotti da risuolare|Descrizione|Mittente|Ricevente|Vettore|Causale)/i.test(left ?? line);
-      // Prezzo allineato a destra quando la riga contiene un separatore \t.
-      if (right !== undefined) {
-        commands.push(textCommand(left.slice(0, 62), 51, y, size, emphasized));
-        commands.push(textRight(right, 545, y, size, false));
-      } else {
-        commands.push(textCommand(line.slice(0, 92), 51, y, size, emphasized));
-      }
+      commands.push(textCenter(options.highlight.value, CENTER, boxY + 13, 16, false, "0"));
     }
-    y -= lineHeight;
-  });
-  if (options.lines.length > visibleLines.length) commands.push(textCommand(`Altre ${options.lines.length - visibleLines.length} voci non visualizzate`, 51, y, 9, true, "0"));
+    y = boxY - 26;
+  }
+
+  const hasBarcode = Boolean(options.barcode);
+  const floor = hasBarcode ? CONTENT_FLOOR_WITH_BARCODE : CONTENT_FLOOR_PLAIN;
+
+  // Griglia dei campi: etichetta piccola, valore, filetto di chiusura.
+  const fields = options.fields ?? [];
+  let pending: PdfField | null = null;
+  const drawField = (field: PdfField, x: number, cellW: number, top: number) => {
+    commands.push(textCommand(field.label.toUpperCase(), x, top - 10, 6.5, false, "0.45", 0.7));
+    commands.push(textCommand(fit(field.value, cellW, 11), x, top - 27, 11, false, "0.05"));
+    commands.push(`q 0.82 G 0.6 w ${n(x)} ${n(top - 35)} m ${n(x + cellW)} ${n(top - 35)} l S Q`);
+  };
+  for (const field of fields) {
+    if (y - FIELD_H < floor) break;
+    if (field.full) {
+      if (pending) { drawField(pending, COL_X[0], COL_W, y); pending = null; y -= FIELD_H; }
+      if (y - FIELD_H < floor) break;
+      drawField(field, LEFT, WIDTH, y);
+      y -= FIELD_H;
+      continue;
+    }
+    if (!pending) { pending = field; continue; }
+    drawField(pending, COL_X[0], COL_W, y);
+    drawField(field, COL_X[1], COL_W, y);
+    pending = null;
+    y -= FIELD_H;
+  }
+  if (pending && y - FIELD_H >= floor) { drawField(pending, COL_X[0], COL_W, y); y -= FIELD_H; }
+
+  // Righe libere (DDT e documenti commerciali).
+  const lines = options.lines ?? [];
+  let rendered = 0;
+  for (const line of lines) {
+    if (y - 15 < floor) break;
+    rendered += 1;
+    if (line.startsWith("---")) {
+      commands.push(`q 0.82 G 0.6 w ${LEFT} ${n(y + 4)} m ${RIGHT} ${n(y + 4)} l S Q`);
+      y -= 10;
+      continue;
+    }
+    const [left, right] = line.split("\t");
+    if (/^(TOTALE|SALDO|IMPORTO DA PAGARE)/i.test(line)) {
+      commands.push(`q 0 g ${LEFT} ${n(y - 5)} ${WIDTH} 19 re f Q`);
+      commands.push(textCommand(fit(left ?? line, WIDTH - 110, 11), LEFT + 9, y, 11, true, "1"));
+      if (right !== undefined) commands.push(textRight(right, RIGHT - 9, y, 11, true, "1"));
+      y -= 23;
+      continue;
+    }
+    const emphasized = /^(Numero|Codice|Cliente|Data|Negozio|Valore|Acconto|Totale concordato|Prodotti prenotati|Prodotti da risuolare|Descrizione|Mittente|Ricevente|Vettore|Causale)/i.test(left ?? line);
+    if (right !== undefined) {
+      commands.push(textCommand(fit(left, WIDTH - 110, 10), LEFT, y, 10, emphasized, "0.05"));
+      commands.push(textRight(right, RIGHT, y, 10, false, "0.05"));
+    } else {
+      commands.push(textCommand(fit(line, WIDTH, 10), LEFT, y, 10, emphasized, "0.05"));
+    }
+    y -= 15;
+  }
+  if (rendered < lines.length) {
+    commands.push(textCommand(`Altre ${lines.length - rendered} voci non visualizzate`, LEFT, y, 8, true, "0.3"));
+    y -= 15;
+  }
 
   if (options.table) {
     const table = options.table;
     const rowH = 16;
-    y -= 8;
-    // Intestazione tabella su barra scura.
-    commands.push(`q 0 g 42 ${y - 5} 511 ${rowH} re f Q`);
+    y -= 6;
+    commands.push(`q 0 g ${LEFT} ${n(y - 5)} ${WIDTH} ${rowH} re f Q`);
     table.headers.forEach((header, index) => {
-      if (table.align[index] === "r") commands.push(textRight(header, table.x[index], y, 8.5, true, "1"));
-      else commands.push(textCommand(header, table.x[index], y, 8.5, true, "1"));
+      if (table.align[index] === "r") commands.push(textRight(header, table.x[index], y, 8, true, "1", 0.4));
+      else commands.push(textCommand(header, table.x[index], y, 8, true, "1", 0.4));
     });
     y -= rowH;
-    const maxRows = Math.min(table.rows.length, 30);
-    for (let ri = 0; ri < maxRows; ri += 1) {
-      const row = table.rows[ri];
-      if (ri % 2 === 1) commands.push(`q 0.94 g 42 ${y - 5} 511 ${rowH} re f Q`);
+    let drawn = 0;
+    for (const row of table.rows) {
+      if (y - rowH < floor) break;
+      if (drawn % 2 === 1) commands.push(`q 0.96 g ${LEFT} ${n(y - 5)} ${WIDTH} ${rowH} re f Q`);
       row.forEach((cell, index) => {
-        if (table.align[index] === "r") commands.push(textRight(cell, table.x[index], y, 8.5, false));
-        else commands.push(textCommand(cell.slice(0, 58), table.x[index], y, 8.5, false));
+        const limit = index === 0 ? table.x[1] - table.x[0] - 14 : 90;
+        if (table.align[index] === "r") commands.push(textRight(cell, table.x[index], y, 8.5, false, "0.05"));
+        else commands.push(textCommand(fit(cell, limit, 8.5), table.x[index], y, 8.5, false, "0.05"));
       });
       y -= rowH;
+      drawn += 1;
     }
-    if (table.rows.length > maxRows) { commands.push(textCommand(`Altre ${table.rows.length - maxRows} righe non visualizzate`, 51, y, 8, true, "0")); y -= rowH; }
+    if (drawn < table.rows.length) { commands.push(textCommand(`Altre ${table.rows.length - drawn} righe non visualizzate`, LEFT, y, 8, true, "0.3")); y -= rowH; }
   }
 
   if (options.totals) {
-    const rowH = 17;
+    const rowH = 18;
     y -= 8;
     for (const total of options.totals) {
+      if (y - rowH < floor) break;
       if (total.strong) {
-        commands.push(`q 0 g 300 ${y - 5} 253 ${rowH} re f Q`);
-        commands.push(textCommand(total.label, 310, y, 11, true, "1"));
-        commands.push(textRight(total.value, 545, y, 11, true, "1"));
+        commands.push(`q 0 g ${n(CENTER)} ${n(y - 5)} ${n(RIGHT - CENTER)} ${rowH} re f Q`);
+        commands.push(textCommand(total.label.toUpperCase(), CENTER + 9, y, 10, true, "1", 0.5));
+        commands.push(textRight(total.value, RIGHT - 9, y, 10, true, "1"));
       } else {
-        commands.push(textRight(total.label, 470, y, 10, false, "0.2"));
-        commands.push(textRight(total.value, 545, y, 10, false));
+        commands.push(textRight(total.label, CENTER + 140, y, 10, false, "0.35"));
+        commands.push(textRight(total.value, RIGHT - 9, y, 10, false, "0.05"));
       }
       y -= rowH;
     }
   }
 
+  // Codice a barre ancorato in fondo, sopra la fascia nera.
   const barcode: PdfBarcode | null = typeof options.barcode === "string" ? { value: options.barcode } : (options.barcode ?? null);
   const isCode128 = barcode?.kind === "code128";
   const bits = barcode ? (isCode128 ? code128Bits(barcode.value) : barcodeBits(barcode.value)) : null;
   if (bits && barcode) {
     // Modulo ridotto quando il codice e lungo, per lasciare almeno 12 moduli di zona bianca per lato.
     const moduleWidth = Math.min(1.9, 305 / (bits.length + 24));
-    const startX = (595 - bits.length * moduleWidth) / 2;
-    const panelBottom = Math.max(46, y - 150);
-    const startY = panelBottom + 25;
-    commands.push(
-      `q 1 g 0 G 1.5 w 145 ${panelBottom} 305 122 re B Q`,
-      textCenter(barcode.caption ?? "EAN PER RICHIAMO RAPIDO IN CASSA", 297.5, panelBottom + 102, 8, true, "0"),
-      "0 g",
-    );
+    const startX = (PAGE_W - bits.length * moduleWidth) / 2;
+    commands.push("0 g");
     for (let index = 0; index < bits.length; index += 1) {
       if (bits[index] !== "1") continue;
       const guard = !isCode128 && (index < 3 || (index >= 45 && index < 50) || index >= 92);
-      commands.push(`${startX + index * moduleWidth} ${startY} ${moduleWidth} ${guard ? 58 : 50} re f`);
+      commands.push(`${n(startX + index * moduleWidth)} ${BARCODE_BARS_Y} ${n(moduleWidth)} ${guard ? BARCODE_BARS_H + 7 : BARCODE_BARS_H} re f`);
     }
-    if (barcode.printValue !== false) commands.push(textCenter(barcode.value, 297.5, panelBottom + 9, 10, true, "0"));
+    commands.push(textCenter(barcode.caption ?? "EAN PER RICHIAMO RAPIDO IN CASSA", CENTER, 112, 6.5, false, "0.45", 0.8));
+    if (barcode.printValue !== false) commands.push(textCenter(barcode.value, CENTER, 97, 10, true, "0"));
   }
 
-  commands.push(
-    "0.55 G 35 35 m 560 35 l S",
-    textCommand("Marinelli Stefano · Documento generato dal gestionale", 42, 20, 8, false, "0.35"),
-    textCommand("Pagina 1", 510, 20, 8, false, "0.35"),
-  );
+  // Fascia nera di chiusura e riga legale.
+  commands.push(`q 0 g ${LEFT} ${FOOTER_BAR_Y} ${WIDTH} ${FOOTER_BAR_H} re f Q`);
+  commands.push(textCenter(options.footer ?? "DOCUMENTO NON FISCALE", CENTER, FOOTER_BAR_Y + 9, 9.5, false, "1", 1));
+  commands.push(textCenter(LEGAL_LINE, CENTER, 40, 7, false, "0.45", 0.3));
 
   const stream = `${commands.join("\n")}\n`;
   const encoder = new TextEncoder();
   const streamBytes = encoder.encode(stream);
-  const logoBytes = Uint8Array.from(atob(LOGO_JPEG_BASE64), (char) => char.charCodeAt(0));
+  const logoBytes = Uint8Array.from(atob(brand.logo.base64), (char) => char.charCodeAt(0));
 
   // Serializzazione con oggetti misti testo + immagine binaria (JPEG /DCTDecode).
   const parts: Uint8Array[] = [];
@@ -245,7 +420,7 @@ export function createPdf(options: PdfOptions) {
   startObject();
   pushText("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
   startObject();
-  pushText("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Im0 7 0 R >> >> /Contents 6 0 R >>\nendobj\n");
+  pushText(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_W} ${PAGE_H}] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> /XObject << /Im0 7 0 R >> >> /Contents 6 0 R >>\nendobj\n`);
   startObject();
   pushText("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n");
   startObject();
@@ -255,7 +430,7 @@ export function createPdf(options: PdfOptions) {
   pushBytes(streamBytes);
   pushText("endstream\nendobj\n");
   startObject();
-  pushText(`7 0 obj\n<< /Type /XObject /Subtype /Image /Width ${LOGO_JPEG_WIDTH} /Height ${LOGO_JPEG_HEIGHT} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logoBytes.length} >>\nstream\n`);
+  pushText(`7 0 obj\n<< /Type /XObject /Subtype /Image /Width ${brand.logo.width} /Height ${brand.logo.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${logoBytes.length} >>\nstream\n`);
   pushBytes(logoBytes);
   pushText("\nendstream\nendobj\n");
 
