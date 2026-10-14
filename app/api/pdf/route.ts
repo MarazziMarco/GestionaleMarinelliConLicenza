@@ -33,21 +33,31 @@ async function getImpl(request: Request) {
     if (user.role !== "admin" && sale.store !== user.store) return json({ error: "Documento non disponibile per questa cassa." }, 403);
     if (type === "fiscal-receipt" && (sale.bankAmount <= 0 || sale.fiscalDocumentType !== "receipt")) return json({ error: "Scontrino fiscale automatico non disponibile per questa vendita." }, 404);
     const items = await all<{ description: string; quantity: number; unitPrice: number; lineTotal: number }>(`SELECT description, quantity, unit_price AS unitPrice, line_total AS lineTotal FROM sale_items WHERE sale_id = ? ORDER BY id`, id);
+    // Sullo scontrino di cortesia i prezzi sono nascosti per impostazione predefinita:
+    // il prezzo pagato resta leggibile solo scansionando il codice a barre in fondo.
+    // Con `prices=1` la cassa puo comunque stamparlo con gli importi in chiaro.
+    const hidePrices = type === "courtesy" && url.searchParams.get("prices") !== "1";
     const lines = [
       `Negozio: ${sale.store}`,
       `Data: ${new Date(sale.createdAt).toLocaleString("it-IT")}`,
       `Cliente: ${sale.customerName}`,
       `Numero vendita: ${sale.receiptNo}`,
       "------------------------------------------------------------",
-      ...items.map((item) => `${item.quantity} x ${item.description.slice(0, 46)}\t${euro(item.lineTotal)}`),
+      ...items.map((item) => `${item.quantity} x ${item.description.slice(0, 46)}${hidePrices ? "" : `\t${euro(item.lineTotal)}`}`),
       "------------------------------------------------------------",
-      `TOTALE\t${euro(sale.total)}`,
-      `Contanti: ${euro(sale.cashAmount)}   Carta: ${euro(sale.cardAmount)}   Bonifico: ${euro(sale.bankAmount)}   Buono: ${euro(sale.giftAmount)}`,
-      type === "courtesy" ? "Documento di cortesia senza indicazione dei prezzi fiscali." : type === "fiscal-receipt" ? "Scontrino generato automaticamente per incasso tramite bonifico bancario." : "Ristampa interna di una vendita gia effettuata.",
+      ...(hidePrices ? [] : [
+        `TOTALE\t${euro(sale.total)}`,
+        `Contanti: ${euro(sale.cashAmount)}   Carta: ${euro(sale.cardAmount)}   Bonifico: ${euro(sale.bankAmount)}   Buono: ${euro(sale.giftAmount)}`,
+      ]),
+      hidePrices ? "Documento di cortesia: prezzo pagato leggibile solo tramite il codice a barre." : type === "courtesy" ? "Documento di cortesia senza indicazione dei prezzi fiscali." : type === "fiscal-receipt" ? "Scontrino generato automaticamente per incasso tramite bonifico bancario." : "Ristampa interna di una vendita gia effettuata.",
     ];
     const title = type === "courtesy" ? "Scontrino di cortesia" : type === "fiscal-receipt" ? "Scontrino fiscale" : "Scontrino interno";
     const subtitle = type === "fiscal-receipt" ? "Pagamento tramite bonifico bancario" : "Copia non fiscale";
-    return pdfResponse(createPdf({ title, subtitle, lines }), `${type}-${sale.receiptNo}.pdf`);
+    // Code 128 col prezzo pagato: scansionandolo la cassa legge l'importo della vendita.
+    const priceBarcode = sale.total > 0
+      ? { value: sale.total.toFixed(2), kind: "code128" as const, caption: hidePrices ? "PREZZO PAGATO - SCANSIONARE PER LEGGERLO" : "PREZZO PAGATO - CODICE A BARRE", printValue: !hidePrices }
+      : null;
+    return pdfResponse(createPdf({ title, subtitle, lines, barcode: priceBarcode }), `${type}-${sale.receiptNo}.pdf`);
   }
 
   if (type === "gift") {

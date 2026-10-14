@@ -9,11 +9,16 @@ type PdfTable = {
 
 type PdfTotal = { label: string; value: string; strong?: boolean };
 
+// Codice a barre del documento: EAN-13 (richiamo rapido in cassa) oppure Code 128
+// (testo libero, usato per il prezzo sugli scontrini). Con `printValue: false` si
+// stampano solo le barre, cosi il valore resta leggibile solo con lo scanner.
+type PdfBarcode = { value: string; kind?: "ean13" | "code128"; caption?: string; printValue?: boolean };
+
 type PdfOptions = {
   title: string;
   subtitle?: string;
   lines: string[];
-  barcode?: string | null;
+  barcode?: string | PdfBarcode | null;
   table?: PdfTable;
   totals?: PdfTotal[];
 };
@@ -22,6 +27,21 @@ const eanL = ["0001101", "0011001", "0010011", "0111101", "0100011", "0110001", 
 const eanG = ["0100111", "0110011", "0011011", "0100001", "0011101", "0111001", "0000101", "0010001", "0001001", "0010111"];
 const eanR = ["1110010", "1100110", "1101100", "1000010", "1011100", "1001110", "1010000", "1000100", "1001000", "1110100"];
 const eanParity = ["LLLLLL", "LLGLGG", "LLGGLG", "LLGGGL", "LGLLGG", "LGGLLG", "LGGGLL", "LGLGLG", "LGLGGL", "LGGLGL"];
+
+// Code 128: larghezze (barra/spazio alternati) dei simboli 0-106; l'ultimo e lo STOP.
+const code128Patterns = [
+  "212222", "222122", "222221", "121223", "121322", "131222", "122213", "122312", "132212", "221213",
+  "221312", "231212", "112232", "122132", "122231", "113222", "123122", "123221", "223211", "221132",
+  "221231", "213212", "223112", "312131", "311222", "321122", "321221", "312212", "322112", "322211",
+  "212123", "212321", "232121", "111323", "131123", "131321", "112313", "132113", "132311", "211313",
+  "231113", "231311", "112133", "112331", "132131", "113123", "113321", "133121", "313121", "211331",
+  "231131", "213113", "213311", "213131", "311123", "311321", "331121", "312113", "312311", "332111",
+  "314111", "221411", "431111", "111224", "111422", "121124", "121421", "141122", "141221", "112214",
+  "112412", "122114", "122411", "142112", "142211", "241211", "221114", "413111", "241112", "134111",
+  "111242", "121142", "121241", "114212", "124112", "124211", "411212", "421112", "421211", "212141",
+  "214121", "412121", "111143", "111341", "131141", "114113", "114311", "411113", "411311", "113141",
+  "114131", "311141", "411131", "211412", "211214", "211232", "2331112",
+];
 
 // Larghezze Helvetica (unità/1000) per allineare a destra i prezzi.
 const helvWidths: Record<string, number> = { " ": 278, "!": 278, "\"": 355, "#": 556, "$": 556, "%": 889, "&": 667, "'": 191, "(": 333, ")": 333, "*": 389, "+": 584, ",": 278, "-": 333, ".": 278, "/": 278, "0": 556, "1": 556, "2": 556, "3": 556, "4": 556, "5": 556, "6": 556, "7": 556, "8": 556, "9": 556, ":": 278, ";": 278, "<": 584, "=": 584, ">": 584, "?": 556, "@": 1015, A: 667, B: 667, C: 722, D: 722, E: 667, F: 611, G: 778, H: 722, I: 278, J: 500, K: 667, L: 556, M: 833, N: 722, O: 778, P: 667, Q: 778, R: 722, S: 667, T: 611, U: 722, V: 667, W: 944, X: 667, Y: 667, Z: 611, "[": 278, "\\": 278, "]": 278, "^": 469, _: 556, "`": 333, a: 556, b: 556, c: 500, d: 556, e: 556, f: 278, g: 556, h: 556, i: 222, j: 222, k: 500, l: 222, m: 833, n: 556, o: 556, p: 556, q: 556, r: 333, s: 500, t: 278, u: 556, v: 500, w: 722, x: 500, y: 500, z: 500, "{": 334, "|": 260, "}": 334, "~": 584 };
@@ -54,6 +74,26 @@ function barcodeBits(code: string) {
   return `${bits}101`;
 }
 
+// Code 128 set B (ASCII 32-126) con cifra di controllo modulo 103.
+export function code128Bits(value: string) {
+  const text = ascii(value);
+  if (!text || /[^\x20-\x7E]/.test(text)) return null;
+  const codes = [104];
+  for (const char of text) codes.push(char.charCodeAt(0) - 32);
+  let checksum = 104;
+  for (let index = 1; index < codes.length; index += 1) checksum += codes[index] * index;
+  codes.push(checksum % 103, 106);
+  let bits = "";
+  for (const code of codes) {
+    let bar = true;
+    for (const width of code128Patterns[code]) {
+      bits += (bar ? "1" : "0").repeat(Number(width));
+      bar = !bar;
+    }
+  }
+  return bits;
+}
+
 function textCommand(value: string, x: number, y: number, size: number, bold = false, gray = "0") {
   return `${gray} g BT /${bold ? "F2" : "F1"} ${size} Tf ${x} ${y} Td (${escapePdf(value)}) Tj ET`;
 }
@@ -62,6 +102,11 @@ function textCommand(value: string, x: number, y: number, size: number, bold = f
 function textRight(value: string, right: number, y: number, size: number, bold = false, gray = "0") {
   const x = right - textWidth(ascii(value), size);
   return textCommand(value, x, y, size, bold, gray);
+}
+
+// Testo centrato attorno all'ascissa `center`.
+function textCenter(value: string, center: number, y: number, size: number, bold = false, gray = "0") {
+  return textCommand(value, center - textWidth(ascii(value), size) / 2, y, size, bold, gray);
 }
 
 export function createPdf(options: PdfOptions) {
@@ -152,23 +197,26 @@ export function createPdf(options: PdfOptions) {
     }
   }
 
-  const bits = options.barcode ? barcodeBits(options.barcode) : null;
-  if (bits && options.barcode) {
-    const moduleWidth = 1.9;
+  const barcode: PdfBarcode | null = typeof options.barcode === "string" ? { value: options.barcode } : (options.barcode ?? null);
+  const isCode128 = barcode?.kind === "code128";
+  const bits = barcode ? (isCode128 ? code128Bits(barcode.value) : barcodeBits(barcode.value)) : null;
+  if (bits && barcode) {
+    // Modulo ridotto quando il codice e lungo, per lasciare almeno 12 moduli di zona bianca per lato.
+    const moduleWidth = Math.min(1.9, 305 / (bits.length + 24));
     const startX = (595 - bits.length * moduleWidth) / 2;
     const panelBottom = Math.max(46, y - 150);
     const startY = panelBottom + 25;
     commands.push(
       `q 1 g 0 G 1.5 w 145 ${panelBottom} 305 122 re B Q`,
-      textCommand("EAN PER RICHIAMO RAPIDO IN CASSA", 196, panelBottom + 102, 8, true, "0"),
+      textCenter(barcode.caption ?? "EAN PER RICHIAMO RAPIDO IN CASSA", 297.5, panelBottom + 102, 8, true, "0"),
       "0 g",
     );
     for (let index = 0; index < bits.length; index += 1) {
       if (bits[index] !== "1") continue;
-      const guard = index < 3 || (index >= 45 && index < 50) || index >= 92;
+      const guard = !isCode128 && (index < 3 || (index >= 45 && index < 50) || index >= 92);
       commands.push(`${startX + index * moduleWidth} ${startY} ${moduleWidth} ${guard ? 58 : 50} re f`);
     }
-    commands.push(textCommand(options.barcode, 249, panelBottom + 9, 10, true, "0"));
+    if (barcode.printValue !== false) commands.push(textCenter(barcode.value, 297.5, panelBottom + 9, 10, true, "0"));
   }
 
   commands.push(
