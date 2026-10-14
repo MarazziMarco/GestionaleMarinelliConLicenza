@@ -3,13 +3,14 @@
 /* eslint-disable @next/next/no-img-element -- authenticated R2 images and local file previews are not compatible with the image optimizer */
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
-import NewCashRegister, { confirmPhysicalRchPrint, localFiscalBridgeRequest, ReturnForm, type CartItem as ShellCartItem, type PendingCashAction } from "./cash-register";
+import NewCashRegister, { confirmPhysicalRchPrint, localFiscalBridgeRequest, ReturnForm, ScannedSaleCard, type CartItem as ShellCartItem, type PendingCashAction, type ScannedSale } from "./cash-register";
 import PwaInstallButton from "./pwa-install";
 import { supabaseBrowser } from "../lib/supabase-client";
 import { emailForUsername } from "../lib/user-profiles";
 import { discountActive, effectivePrice } from "../lib/pricing";
 import { computeReorderRows, computeUnsoldGroups } from "../lib/inventory";
 import { categoryKey, categoryNames } from "../lib/categories";
+import { normalizeScannedCode, isReceiptCode } from "../lib/scan-codes";
 import { isClientTestMode } from "./test-mode-banner";
 
 type Store = "Viterbo" | "Gran Sasso";
@@ -1389,6 +1390,8 @@ function AppSkeleton() {
 export default function Gestionale() {
   const [user, setUser] = useState<User | null>(null); const [data, setData] = useState<Bootstrap | null>(null); const [loading, setLoading] = useState(true); const [page, setPage] = useState("dashboard"); const [menuOpen, setMenuOpen] = useState(false); const [fatal, setFatal] = useState(""); const [syncState, setSyncState] = useState<"online" | "syncing" | "offline">("syncing");
   const [scanned, setScanned] = useState<Product | null>(null); const [saleQueue, setSaleQueue] = useState<number[]>([]); const [scanNotice, setScanNotice] = useState("");
+  // Scontrino richiamato col suo codice a barre da una pagina qualsiasi.
+  const [scannedSale, setScannedSale] = useState<ScannedSale | null>(null);
   const [pendingCashAction, setPendingCashAction] = useState<PendingCashAction | null>(null);
   const [registerStore, setRegisterStore] = useState<Store | null>(null);
   const goTo = (target: string, store?: Store) => { if (store) setRegisterStore(store); setPage(target); };
@@ -1462,8 +1465,22 @@ export default function Gestionale() {
       document.removeEventListener("visibilitychange", refreshWhenActive);
     };
   }, [user?.id, reload]);
+  // Il codice a barre dello scontrino porta solo il riferimento: la vendita
+  // completa (righe, sconti, pagamenti) arriva dal gestionale.
+  const openScannedSale = useCallback(async (code: string) => {
+    setScanNotice("");
+    try {
+      const response = await fetch(`/api/data?view=code&q=${encodeURIComponent(code)}`, { cache: "no-store" });
+      const result = await response.json();
+      if (!response.ok || result.kind !== "sale") throw new Error(result.error ?? "Scontrino non trovato.");
+      setScannedSale({ record: result.record, items: result.items ?? [] });
+    } catch (reason) {
+      setScanNotice(reason instanceof Error ? reason.message : `Scontrino ${code} non trovato.`);
+    }
+  }, []);
   // Scansione globale: da qualsiasi schermata (tranne la Cassa, che ha il suo
-  // scanner) un lettore EAN apre la scheda prodotto con "Aggiungi alla vendita".
+  // scanner) un lettore EAN apre la scheda prodotto con "Aggiungi alla vendita",
+  // mentre il codice di uno scontrino apre la vendita gia registrata.
   useEffect(() => {
     if (!user || !data || page === "cash") return;
     let buffer = ""; let last = 0;
@@ -1475,17 +1492,22 @@ export default function Gestionale() {
       last = now;
       if (event.key === "Enter") {
         if (buffer.length >= 6) {
-          const code = buffer; buffer = "";
+          // Lo scanner usa il layout US: sui numeri scontrino il trattino arriva come apostrofo.
+          const code = normalizeScannedCode(buffer); buffer = "";
+          // Codice a barre di uno scontrino: apre la vendita per intero, come in Cassa.
+          if (isReceiptCode(code)) { void openScannedSale(code); return; }
           const found = data.products.find((product) => product.eans.split(",").map((value) => value.trim()).includes(code));
           if (found) { setScanned(found); setScanNotice(""); } else setScanNotice(`EAN ${code} non riconosciuto.`);
         }
         return;
       }
-      if (/^[0-9]$/.test(event.key)) buffer += event.key;
+      // Oltre alle cifre degli EAN servono le lettere e i segni che lo scanner
+      // produce al posto del trattino nei numeri scontrino.
+      if (event.key.length === 1 && event.key !== " ") buffer += event.key;
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [user, data, page]);
+  }, [user, data, page, openScannedSale]);
   useEffect(() => { if (!scanNotice) return; const timer = window.setTimeout(() => setScanNotice(""), 3500); return () => window.clearTimeout(timer); }, [scanNotice]);
   const addToSale = useCallback((product: Product) => { setSaleQueue((queue) => [...queue, product.id]); setScanned(null); setScanNotice(`${product.name} ${product.color} ${product.size} aggiunto alla vendita. Vai in Cassa per incassare.`); }, []);
   async function logout() { try { await supabaseBrowser().auth.signOut(); } catch { /* Supabase non configurato (dev) */ } await fetch("/api/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "logout" }) }).catch(() => undefined); setUser(null); setData(null); setSyncState("syncing"); }
@@ -1498,5 +1520,5 @@ export default function Gestionale() {
   const content: Record<string, ReactNode> = { dashboard: <DashboardNew data={data} goTo={goTo} reload={reload} />, cash: <NewCashRegister data={data} reload={reload} queue={saleQueue} onQueueConsumed={() => setSaleQueue([])} cart={cart} setCart={setCart} pendingAction={pendingCashAction} onPendingConsumed={() => setPendingCashAction(null)} onInspectProduct={(id) => setScanned(data.products.find((p) => p.id === id) ?? null)} />, customers: <Customers data={data} reload={reload} />, warehouse: <Warehouse data={data} reload={reload} />, unsold: <UnsoldPromotions data={data} reload={reload} />, inventory: <Inventory data={data} />, reorder: <ReorderList data={data} reload={reload} />, transfers: <Transfers data={data} reload={reload} newResponses={newResponses} />, load: <QuickLoad data={data} reload={reload} />, documents: <Documents data={data} reload={reload} />, register: <Register data={data} presetStore={registerStore} onPresetConsumed={() => setRegisterStore(null)} />, reports: <CashReports data={data} />, gifts: <GiftSummary data={data} reload={reload} goToCash={(action: PendingCashAction) => { setPendingCashAction(action); setPage("cash"); }} />, reservations: <ReservationSummary data={data} reload={reload} goToCash={(action: PendingCashAction) => { setPendingCashAction(action); setPage("cash"); }} />, repairs: <ReservationSummary data={data} reload={reload} repair goToCash={(action: PendingCashAction) => { setPendingCashAction(action); setPage("cash"); }} />, returns: <Returns data={data} goToCash={(action: PendingCashAction) => { setPendingCashAction(action); setPage("cash"); }} />, analytics: <Analytics data={data} />, storico: <ActivityLog isAdmin={user.role === "admin"} />, fiscal: <FiscalRegisters data={data} reload={reload} />, settings: <Settings theme={theme} setTheme={setTheme} isAdmin={user.role === "admin"} data={data} reload={reload} />, services: <Services data={data} reload={reload} /> };
   const syncTime = new Date(data.generatedAt).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const syncLabel = syncState === "offline" ? "Connessione assente" : syncState === "syncing" ? "Sincronizzazione…" : "Dati in tempo reale";
-  return <div className="app-shell"><button className={`mobile-menu ${menuOpen ? "open" : ""}`} onClick={() => setMenuOpen((value) => !value)} aria-label={menuOpen ? "Chiudi menu" : "Apri menu"} aria-expanded={menuOpen}><MaterialIcon>{menuOpen ? "close" : "menu"}</MaterialIcon></button>{menuOpen && <button className="mobile-menu-backdrop" onClick={() => setMenuOpen(false)} aria-label="Chiudi menu" />}<aside className={`sidebar ${menuOpen ? "open" : ""}`}><div className="sidebar-brand"><div className="brand-mark small-mark"><img src="/ms-logo.png" alt="" /></div><img className="sidebar-wordmark" src="/gestionale-wordmark.png" alt="Gestionale Stefano Marinelli" /></div><nav>{(user.role === "admin" ? adminMenuGroups : cashierMenuGroups).map((group) => <div className="nav-group" key={group.label || "top"}>{group.label && <p className="nav-group-title">{group.label}</p>}{group.items.map(navButton)}</div>)}</nav><button type="button" className={`sidebar-sync ${syncState}`} onClick={() => void reload()} title="Aggiorna ora"><i /><span><strong>{syncLabel}</strong><small>{syncState === "offline" ? "Clicca per riprovare" : `Aggiornato alle ${syncTime}`}</small></span></button><div className="sidebar-user"><div className="avatar">{user.displayName.slice(0, 2).toUpperCase()}</div><span><strong>{user.displayName}</strong><small>{user.store ?? "Amministrazione"}</small></span><button className="icon-button" onClick={logout} title="Esci" aria-label="Esci"><MaterialIcon>logout</MaterialIcon></button></div></aside><main className="app-main">{content[page] ?? content.cash}</main>{scanned && <Modal title="Prodotto scansionato" guard={false} onClose={() => setScanned(null)}><ScanInfo data={data} product={scanned} onAdd={addToSale} /></Modal>}{scanNotice && <div className="scan-toast" role="status">{scanNotice}{saleQueue.length > 0 && page !== "cash" && <button className="secondary small" onClick={() => { setPage("cash"); setScanNotice(""); }}>Vai in Cassa ({saleQueue.length})</button>}</div>}</div>;
+  return <div className="app-shell"><button className={`mobile-menu ${menuOpen ? "open" : ""}`} onClick={() => setMenuOpen((value) => !value)} aria-label={menuOpen ? "Chiudi menu" : "Apri menu"} aria-expanded={menuOpen}><MaterialIcon>{menuOpen ? "close" : "menu"}</MaterialIcon></button>{menuOpen && <button className="mobile-menu-backdrop" onClick={() => setMenuOpen(false)} aria-label="Chiudi menu" />}<aside className={`sidebar ${menuOpen ? "open" : ""}`}><div className="sidebar-brand"><div className="brand-mark small-mark"><img src="/ms-logo.png" alt="" /></div><img className="sidebar-wordmark" src="/gestionale-wordmark.png" alt="Gestionale Stefano Marinelli" /></div><nav>{(user.role === "admin" ? adminMenuGroups : cashierMenuGroups).map((group) => <div className="nav-group" key={group.label || "top"}>{group.label && <p className="nav-group-title">{group.label}</p>}{group.items.map(navButton)}</div>)}</nav><button type="button" className={`sidebar-sync ${syncState}`} onClick={() => void reload()} title="Aggiorna ora"><i /><span><strong>{syncLabel}</strong><small>{syncState === "offline" ? "Clicca per riprovare" : `Aggiornato alle ${syncTime}`}</small></span></button><div className="sidebar-user"><div className="avatar">{user.displayName.slice(0, 2).toUpperCase()}</div><span><strong>{user.displayName}</strong><small>{user.store ?? "Amministrazione"}</small></span><button className="icon-button" onClick={logout} title="Esci" aria-label="Esci"><MaterialIcon>logout</MaterialIcon></button></div></aside><main className="app-main">{content[page] ?? content.cash}</main>{scanned && <Modal title="Prodotto scansionato" guard={false} onClose={() => setScanned(null)}><ScanInfo data={data} product={scanned} onAdd={addToSale} /></Modal>}{scannedSale && <ScannedSaleCard sale={scannedSale} onClose={() => setScannedSale(null)} />}{scanNotice && <div className="scan-toast" role="status">{scanNotice}{saleQueue.length > 0 && page !== "cash" && <button className="secondary small" onClick={() => { setPage("cash"); setScanNotice(""); }}>Vai in Cassa ({saleQueue.length})</button>}</div>}</div>;
 }

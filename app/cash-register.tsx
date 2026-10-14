@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { effectivePrice, giftRedemptionAmount } from "../lib/pricing";
+import { normalizeScannedCode } from "../lib/scan-codes";
 
 type Store = "Viterbo" | "Gran Sasso";
 type User = { role: "admin" | "viterbo" | "gran_sasso"; store: Store | null };
@@ -197,12 +198,12 @@ function reservationLineTotal(item: ReservationDraftLine) {
 
 // Vendita richiamata dal codice a barre di uno scontrino: il codice porta solo il
 // riferimento, le righe e i pagamenti arrivano dal gestionale.
-type ScannedSale = {
+export type ScannedSale = {
   record: { id: number; receiptNo: string; store: Store; type: string; subtotal: number; adjustment: number; total: number; cashAmount: number; cardAmount: number; bankAmount: number; giftAmount: number; giftCodeUsed: string; createdAt: string; customerName: string };
   items: { description: string; quantity: number; unitPrice: number; discountPercent: number; lineTotal: number; itemType: string }[];
 };
 
-function ScannedSaleCard({ sale, onClose }: { sale: ScannedSale; onClose: () => void }) {
+export function ScannedSaleCard({ sale, onClose }: { sale: ScannedSale; onClose: () => void }) {
   const { record, items } = sale;
   const payments = ([
     ["Contanti", record.cashAmount],
@@ -477,7 +478,8 @@ export function ReturnForm({ store, add, close }: { store: Store; add: (item: Ca
   async function loadReceipt() {
     setError(""); setSelectedLine(null); setReceiptLines([]);
     try {
-      const result = await readJson(await fetch(`/api/data?view=returnReceipt&store=${encodeURIComponent(store)}&receipt=${encodeURIComponent(receipt)}`));
+      // Il numero puo arrivare dallo scanner, che scrive il trattino come apostrofo.
+      const result = await readJson(await fetch(`/api/data?view=returnReceipt&store=${encodeURIComponent(store)}&receipt=${encodeURIComponent(normalizeScannedCode(receipt))}`));
       setReceiptLines(result.items as ReturnableLine[]);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Scontrino non trovato."); }
   }
@@ -717,7 +719,9 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
     } catch (reason) { setError(reason instanceof Error ? reason.message : "Buono non riconosciuto."); }
   }
 
-  async function scan(code: string) {
+  async function scan(raw: string) {
+    // Lo scanner usa il layout US: sui numeri scontrino il trattino arriva come apostrofo.
+    const code = normalizeScannedCode(raw);
     setError(""); setNotice("");
     try {
       const result = await readJson(await fetch(`/api/data?view=code&q=${encodeURIComponent(code)}`));
