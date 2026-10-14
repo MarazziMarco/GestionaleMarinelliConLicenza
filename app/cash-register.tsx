@@ -590,7 +590,7 @@ function OperationsMenu({ store, onPick }: { store: Store; onPick: (modal: strin
   </div>;
 }
 
-export default function CashRegister({ data, reload, queue, onQueueConsumed, cart, setCart, pendingAction, onPendingConsumed, onInspectProduct }: { data: CashData; reload: () => Promise<void>; queue?: number[]; onQueueConsumed?: () => void; cart: CartItem[]; setCart: React.Dispatch<React.SetStateAction<CartItem[]>>; pendingAction?: PendingCashAction | null; onPendingConsumed?: () => void; onInspectProduct?: (productId: number) => void }) {
+export default function CashRegister({ data, reload, queue, onQueueConsumed, cart, setCart, pendingAction, onPendingConsumed, onInspectProduct, onInspectSale }: { data: CashData; reload: () => Promise<void>; queue?: number[]; onQueueConsumed?: () => void; cart: CartItem[]; setCart: React.Dispatch<React.SetStateAction<CartItem[]>>; pendingAction?: PendingCashAction | null; onPendingConsumed?: () => void; onInspectProduct?: (productId: number) => void; onInspectSale?: (sale: ScannedSale) => void }) {
   const [adminStore, setAdminStore] = useState<Store>("Viterbo");
   const store = data.user.store ?? adminStore;
   const [customer, setCustomer] = useState<Customer | null>(null);
@@ -610,8 +610,6 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
   // Sullo scontrino di cortesia il prezzo e nascosto di base: la transazione si
   // rivede scansionando il codice a barre dello scontrino.
   const [hideCourtesyPrice, setHideCourtesyPrice] = useState(true);
-  // Vendita richiamata scansionando il codice a barre di uno scontrino.
-  const [scannedSale, setScannedSale] = useState<ScannedSale | null>(null);
   const [completing, setCompleting] = useState(false);
   const [cardAmount, setCardAmount] = useState("");
   const [fiscalDocumentType, setFiscalDocumentType] = useState<"receipt" | "invoice">("receipt");
@@ -724,8 +722,8 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
     try {
       const result = await readJson(await fetch(`/api/data?view=code&q=${encodeURIComponent(code)}`));
       if (result.kind === "sale") {
-        // Scontrino richiamato: mostra la transazione, non tocca il carrello.
-        setScannedSale({ record: result.record, items: result.items ?? [] });
+        // Scontrino richiamato: lo apre il Registro cassa, il carrello non si tocca.
+        onInspectSale?.({ record: result.record, items: result.items ?? [] });
       } else if (result.kind === "product") {
         const product = data.products.find((item) => item.id === Number(result.record.id));
         if (!product) throw new Error("Prodotto non disponibile nell'elenco attuale.");
@@ -863,7 +861,6 @@ export default function CashRegister({ data, reload, queue, onQueueConsumed, car
       </div>
       {modal && <Modal title={modal === "customer" ? "Nuovo cliente" : modal === "gift" ? "Buono regalo" : modal === "repair" ? "Risuolatura multiprodotto" : modal === "reservation" ? "Prenotazione multiprodotto" : modal === "return" ? "Reso o cambio" : modal === "shirt" ? "Maglie Gran Sasso" : "Varie"} onClose={() => setModal(null)}>{modal === "customer" && <NewCustomerForm store={store} reload={reload} onCreated={setCustomer} close={() => setModal(null)} initialName={customerPrefill} />}{modal === "gift" && <GiftForm add={addDraft} close={() => setModal(null)} />}{modal === "varie" && <ServiceForm title="Vendita varie" defaultDescription="Varie" add={addDraft} close={() => setModal(null)} />}{modal === "shirt" && <ServiceForm title="Vendita dedicata Gran Sasso" defaultDescription="Maglie Gran Sasso" add={addDraft} close={() => setModal(null)} />}{modal === "repair" && <DepositForm products={[]} store={store} repair add={addDraft} close={() => setModal(null)} />}{modal === "reservation" && <DepositForm products={data.products} store={store} repair={false} add={addDraft} close={() => setModal(null)} />}{modal === "return" && <ReturnForm store={store} add={addDraft} close={() => setModal(null)} />}</Modal>}
       {saleDone && <Modal title="Vendita registrata" guard={false} onClose={() => setSaleDone(null)}><div className="sale-done"><div className="sale-done-icon"><MaterialIcon>check_circle</MaterialIcon></div><h2>Scontrino {saleDone.receiptNo}</h2><div className="sale-done-total"><span>Totale</span><strong>{money(saleDone.total)}</strong></div>{saleDone.cash != null && <><div className="sale-done-row"><span>Contanti ricevuti</span><b>{money(saleDone.cash)}</b></div><div className="sale-done-change"><span>RESTO</span><strong>{money(saleDone.change)}</strong></div></>}<label className="courtesy-toggle"><input type="checkbox" checked={hideCourtesyPrice} onChange={(event) => setHideCourtesyPrice(event.target.checked)} /><span>Nascondi il prezzo sulla cortesia<small>La transazione resta richiamabile col codice a barre</small></span></label><div className="form-actions"><a className="secondary" href={`/api/pdf?type=courtesy&id=${saleDone.id}${hideCourtesyPrice ? "" : "&prices=1"}`} target="_blank" rel="noreferrer">Stampa scontrino di cortesia</a><a className="text-button" href={`/api/pdf?type=receipt&id=${saleDone.id}`} target="_blank" rel="noreferrer">Scontrino interno</a><button className="primary" onClick={() => setSaleDone(null)}>Nuova vendita</button></div></div></Modal>}
-      {scannedSale && <ScannedSaleCard sale={scannedSale} onClose={() => setScannedSale(null)} />}
     </section>
   );
 }

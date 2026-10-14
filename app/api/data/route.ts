@@ -5,7 +5,7 @@ import { createAuthUser, setAuthUserPassword, deleteAuthUser } from "../../../li
 import { computeNextDocumentNumber } from "../../../lib/pricing";
 import { buildFiscalLines, type FiscalItem } from "../../../lib/fiscal-lines";
 import { canonicalCategory, categoryKey, categoryNames } from "../../../lib/categories";
-import { compactCode, isReceiptCode } from "../../../lib/scan-codes";
+import { compactCode, isReceiptCode, scanVariants } from "../../../lib/scan-codes";
 
 type JsonMap = Record<string, unknown>;
 type CartItem = {
@@ -335,11 +335,13 @@ async function getImpl(request: Request) {
     // solo il riferimento, le righe arrivano da qui. Il confronto avviene sulla
     // forma compatta, perche la pistola traduce i separatori in modo imprevedibile.
     if (isReceiptCode(code)) {
-      const compact = compactCode(code);
-      const sale = auth.user.role === "admin"
-        ? await database().prepare(`${SALE_BY_CODE_SQL} WHERE ${RECEIPT_MATCH}`).bind(compact).first<{ id: number }>()
-        : await database().prepare(`${SALE_BY_CODE_SQL} WHERE ${RECEIPT_MATCH} AND s.store = ?`).bind(compact, auth.user.store).first<{ id: number }>();
-      if (sale) {
+      // Si prova il codice com'e arrivato e poi tradotto dal layout US della pistola:
+      // basta che una delle due letture corrisponda a uno scontrino.
+      for (const compact of [...new Set(scanVariants(code).map(compactCode))]) {
+        const sale = auth.user.role === "admin"
+          ? await database().prepare(`${SALE_BY_CODE_SQL} WHERE ${RECEIPT_MATCH}`).bind(compact).first<{ id: number }>()
+          : await database().prepare(`${SALE_BY_CODE_SQL} WHERE ${RECEIPT_MATCH} AND s.store = ?`).bind(compact, auth.user.store).first<{ id: number }>();
+        if (!sale) continue;
         const items = await all(`SELECT description, quantity, unit_price AS unitPrice, discount_percent AS discountPercent, line_total AS lineTotal, item_type AS itemType FROM sale_items WHERE sale_id = ? ORDER BY id`, sale.id);
         return json({ kind: "sale", record: sale, items });
       }

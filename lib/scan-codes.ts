@@ -1,13 +1,47 @@
-// Il lettore di codici a barre "digita" i caratteri come una tastiera, ma col
-// layout US: su Windows in italiano i segni di punteggiatura cadono su tasti
-// diversi, e lo stesso trattino puo arrivare come ' : / o altro ancora.
+// La pistola non "manda un codice": simula una tastiera, e preme i tasti del
+// layout US. Windows, impostato in italiano, legge quegli stessi tasti con la
+// mappa italiana, quindi i segni di punteggiatura escono sbagliati: il trattino
+// di VT-261014121530-472 arriva come ' (e, su altre configurazioni, come : / ecc.).
 // Lettere e cifre invece coincidono fra i due layout e arrivano sempre giuste.
 //
-// Percio nei codici a barre degli scontrini stampiamo solo lettere e cifre
-// (VT261014121530472), mentre sotto resta leggibile il numero vero
-// (VT-261014121530-472). Qui riportiamo qualunque forma a quella compatta:
-// cosi funzionano sia i codici nuovi, sia quelli vecchi col trattino, sia il
-// numero digitato a mano.
+// Qui traduciamo all'indietro: dal carattere che Windows ha prodotto torniamo a
+// quello che la pistola voleva digitare.
+
+// Carattere ricevuto (layout italiano) -> carattere inteso (layout US).
+// Ogni riga e' lo stesso tasto fisico, prima senza e poi con lo shift.
+const US_FROM_IT: Record<string, string> = {
+  "'": "-", "?": "_",   // tasto a destra dello 0
+  "ì": "=", "^": "+",   // tasto a destra del precedente
+  "è": "[", "é": "{",   // tasto a destra della P
+  "+": "]", "*": "}",   // tasto a destra del precedente
+  "ù": "\\", "§": "|",  // tasto a destra della A'
+  "ò": ";", "ç": ":",   // tasto a destra della L
+  "à": "'", "°": "\"",  // tasto a destra del precedente
+  "\\": "`", "|": "~",  // tasto a sinistra della Z
+  ";": "<", ":": ">",   // virgola e punto con shift
+  "-": "/", "_": "?",   // tasto a destra del punto
+  "\"": "@", "£": "#",  // cifre con shift
+  "&": "^", "/": "&",
+  "(": "*", ")": "(", "=": ")",
+};
+
+/** Riporta al layout US il testo digitato dalla pistola e letto da Windows in italiano. */
+export function translateUsLayout(raw: string) {
+  let out = "";
+  for (const char of raw) out += US_FROM_IT[char] ?? char;
+  return out;
+}
+
+/**
+ * Le letture plausibili di un codice sparato dalla pistola, dalla piu probabile
+ * alla meno: prima com'e arrivato (pistola gia configurata in italiano, oppure
+ * codice digitato a mano), poi tradotto dal layout US.
+ */
+export function scanVariants(raw: string) {
+  const code = raw.trim();
+  const translated = translateUsLayout(code);
+  return translated === code ? [code] : [code, translated];
+}
 
 /** Vero se il codice e il numero di uno scontrino, con o senza separatori. */
 export function isReceiptCode(raw: string) {

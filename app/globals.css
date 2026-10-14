@@ -920,6 +920,11 @@ td small { margin-top: .16rem; font-size: .62rem; }
 /* Il toggle cortesia nasce nella colonna scura del checkout: nel modal va riportato ai colori chiari. */
 .sale-done .courtesy-toggle { color: var(--ink); justify-content: center; text-align: left; padding-top: 6px; }
 
+/* Riga del Registro cassa raggiunta scansionando il codice a barre dello scontrino. */
+.scanned-row > td { background: rgba(163,230,53,.16); box-shadow: inset 0 1px 0 var(--lime), inset 0 -1px 0 var(--lime); }
+.scanned-row > td:first-child { box-shadow: inset 1px 1px 0 var(--lime), inset 0 -1px 0 var(--lime); }
+.scanned-row > td:last-child { box-shadow: inset -1px 1px 0 var(--lime), inset 0 -1px 0 var(--lime); }
+
 /* ===== Transazione richiamata dal codice a barre dello scontrino ===== */
 .scanned-sale { display: flex; flex-direction: column; gap: 12px; }
 .scanned-sale-head { display: flex; flex-wrap: wrap; gap: 18px; }
